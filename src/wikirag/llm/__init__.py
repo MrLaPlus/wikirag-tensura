@@ -14,6 +14,7 @@ def get_llm_provider(
     model_name: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    retry_enabled: bool = True,
 ) -> BaseLLMProvider:
     """Factory function resolving the requested LLM provider dynamically at runtime.
     
@@ -35,11 +36,18 @@ def get_llm_provider(
             model=model or "meta-llama/llama-3.1-8b-instruct:free",
             api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             base_url=base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            retry_enabled=retry_enabled,
         )
     elif prov == "gemini":
         return GeminiProvider(model=model or "gemini-2.5-flash", api_key=api_key)
     elif prov == "openai":
         return OpenAIProvider(model=model or "gpt-4o-mini", api_key=api_key, base_url=base_url)
+    elif prov == "lmstudio":
+        return OpenAIProvider(
+            model=model or "local-model",
+            api_key=api_key or "lm-studio",
+            base_url=base_url or os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"),
+        )
     elif prov == "anthropic":
         return AnthropicProvider(model=model or "claude-3-5-sonnet-20241022", api_key=api_key)
     elif prov == "llamacpp":

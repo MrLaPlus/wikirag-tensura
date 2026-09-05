@@ -8,6 +8,8 @@ class ChatRequest(BaseModel):
     project: str = "tensura"
     llm_provider: Optional[str] = None # e.g. "ollama", "openrouter", "gemini", "openai"
     llm_model: Optional[str] = None
+    fallback_model: Optional[str] = None
+    enable_retry: bool = True
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     max_output_tokens: int = 1024

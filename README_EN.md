@@ -2,6 +2,8 @@
 
 [ภาษาไทย](README.md)
 
+**Current release: v2.0.1** · See the full [CHANGELOG.md](CHANGELOG.md)
+
 WikiRAG is a local-first Retrieval-Augmented Generation (RAG) platform for fandom and knowledge wikis. This repository contains the Tensura knowledge-base configuration, CLI tools, FastAPI web application, multilingual retrieval, entity browsing, a knowledge graph, and pluggable LLM providers.
 
 ## Overview

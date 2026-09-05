@@ -69,6 +69,8 @@
       color: #3d3d3a;
       font-family: 'Inter', 'StyreneB', sans-serif;
       -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+      height: 100vh;
     }
     .dark body {
       background-color: #181715;
@@ -129,7 +131,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useMemo } = React;
 
     // Anthropic signature 4-spoke starburst / radial spike icon
     const AnthropicSpike = ({ className = "w-4 h-4 fill-current" }) => (
@@ -219,17 +221,31 @@
       }
     };
 
+    const LLM_MODEL_PRESETS = {
+      openrouter: ['minimax/minimax-m3:free', 'google/gemma-4-31b-it:free', 'meta-llama/llama-3.1-8b-instruct:free'],
+      ollama: ['llama3.1:8b', 'qwen2.5:7b', 'gemma3:4b'],
+      gemini: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+      openai: ['gpt-4o-mini', 'gpt-4.1-mini'],
+      anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
+      lmstudio: [],
+    };
+
     function App() {
-      const [lang, setLang] = useState('th');
-      const [darkMode, setDarkMode] = useState(false);
-      const [tab, setTab] = useState('chat'); // 'chat' | 'entities' | 'graph' | 'admin'
+      const [lang, setLang] = useState(() => localStorage.getItem('wikirag_language') || 'en');
+      const [darkMode, setDarkMode] = useState(() => localStorage.getItem('wikirag_dark_mode') === 'true');
+      const [tab, setTab] = useState(() => {
+        const saved = localStorage.getItem('wikirag_active_tab');
+        return ['chat', 'entities', 'graph', 'admin'].includes(saved) ? saved : 'chat';
+      }); // 'chat' | 'entities' | 'graph' | 'admin'
       const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+      const [providerTestStatus, setProviderTestStatus] = useState(null);
+      const settingsFileInputRef = useRef(null);
 
       // Settings state (with localStorage persistence)
       const [settings, setSettings] = useState(() => {
         const saved = localStorage.getItem('wikirag_settings');
         if (saved) {
-          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: false,
+          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: false, enableRetry: parsed.enableRetry !== false,
             embeddingModel: parsed.embeddingModel || 'BAAI/bge-m3', embeddingDevice: parsed.embeddingDevice || 'cpu', embeddingBatchSize: parsed.embeddingBatchSize || 8,
             rerankerModel: parsed.rerankerModel || 'BAAI/bge-reranker-v2-m3', chunkMinTokens: parsed.chunkMinTokens || 400, chunkMaxTokens: parsed.chunkMaxTokens || 800,
             chunkOverlap: parsed.chunkOverlap ?? 15, crawlerBatchSize: parsed.crawlerBatchSize || 50, crawlerDelay: parsed.crawlerDelay ?? 0.5,
@@ -239,6 +255,8 @@
         return {
           provider: 'openrouter',
           model: 'minimax/minimax-m3:free',
+          fallbackModel: '',
+          enableRetry: true,
            apiKey: '',
            baseUrl: '',
           embeddingBackend: 'onnx',
@@ -356,6 +374,52 @@
         setIsSettingsOpen(false);
       };
 
+      const testProvider = async () => {
+        setProviderTestStatus('testing');
+        try {
+          const res = await fetch('/api/llm/test', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings)});
+          setProviderTestStatus(res.ok ? 'ok' : 'error');
+        } catch (e) {
+          setProviderTestStatus('error');
+        }
+      };
+
+      const exportSettings = () => {
+        const safeSettings = {...settings, apiKey: undefined};
+        const blob = new Blob([JSON.stringify(safeSettings, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = 'wikirag-settings.json'; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
+      const importSettings = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+          const imported = JSON.parse(await file.text());
+          setSettings(prev => ({...prev, ...imported, apiKey: prev.apiKey || ''}));
+          alert(lang === 'th' ? 'นำเข้าการตั้งค่าแล้ว กรุณากดบันทึกและใช้ค่า' : 'Settings imported. Click Save Settings to apply.');
+        } catch (e) { alert(lang === 'th' ? 'ไฟล์การตั้งค่าไม่ถูกต้อง' : 'Invalid settings file'); }
+        event.target.value = '';
+      };
+
+      const exportChat = () => {
+        const content = messages.map(m => `## ${m.role === 'user' ? 'User' : 'WikiRAG'}\n\n${m.content || ''}`).join('\n\n');
+        const blob = new Blob([content], {type: 'text/markdown;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = `wikirag-chat-${new Date().toISOString().slice(0, 10)}.md`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
+      const clearChatHistory = async () => {
+        if (!conversations.length || !confirm(lang === 'th' ? 'ลบประวัติแชททั้งหมดหรือไม่?' : 'Delete all chat history?')) return;
+        await Promise.all(conversations.map(c => fetch(`/api/conversations/${encodeURIComponent(c.id)}`, {method: 'DELETE'})));
+        setConversations([]); setConversationId(null); setActiveSources([]);
+        setMessages([{role: 'assistant', content: lang === 'th' ? 'เริ่มแชทใหม่ได้เลยครับ' : 'Start a new chat whenever you are ready.', sources: []}]);
+      };
+
       const resetAdvancedSettings = () => {
         if (!confirm(lang === 'th' ? 'คืนค่าการตั้งค่าขั้นสูงเป็นค่าเริ่มต้นหรือไม่?' : 'Reset advanced settings to defaults?')) return;
         setSettings({...settings, embeddingModel: 'BAAI/bge-m3', embeddingDevice: 'cpu', embeddingBatchSize: 8,
@@ -377,14 +441,25 @@
       ]);
       const [inputQuery, setInputQuery] = useState('');
       const [isStreaming, setIsStreaming] = useState(false);
+      const [chatMetrics, setChatMetrics] = useState(null);
       const [activeSources, setActiveSources] = useState([]);
       const [editingIndex, setEditingIndex] = useState(null);
       const abortControllerRef = useRef(null);
       const messagesEndRef = useRef(null);
+      const messagesScrollRef = useRef(null);
+      const shouldAutoScrollRef = useRef(true);
 
       // Entity Explorer state
       const [entities, setEntities] = useState([]);
       const [searchEntityText, setSearchEntityText] = useState('');
+      const [entityGroup, setEntityGroup] = useState('all');
+      const [entitySort, setEntitySort] = useState('name-asc');
+      const [entitySpeciesFilter, setEntitySpeciesFilter] = useState('');
+      const [entityRankFilter, setEntityRankFilter] = useState('');
+      const [entityStatusFilter, setEntityStatusFilter] = useState('');
+      const [entityAffiliationFilter, setEntityAffiliationFilter] = useState('');
+      const [entityMissingRankOnly, setEntityMissingRankOnly] = useState(false);
+      const [entityVisibleLimit, setEntityVisibleLimit] = useState(60);
       const [selectedEntity, setSelectedEntity] = useState(null);
       const [loadingEntities, setLoadingEntities] = useState(false);
 
@@ -399,9 +474,19 @@
       // Knowledge Graph state & Canvas
       const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
       const [graphLoading, setGraphLoading] = useState(false);
+      const [graphTypeFilter, setGraphTypeFilter] = useState('all');
+      const [graphRelationFilter, setGraphRelationFilter] = useState('all');
+      const [graphSearch, setGraphSearch] = useState('');
+      const [graphViewReset, setGraphViewReset] = useState(0);
+      const [selectedRelationship, setSelectedRelationship] = useState(null);
       const canvasRef = useRef(null);
 
       const t = I18N[lang];
+
+      const handleMessagesScroll = (e) => {
+        const el = e.currentTarget;
+        shouldAutoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      };
 
       useEffect(() => {
         if (darkMode) {
@@ -409,10 +494,28 @@
         } else {
           document.documentElement.classList.remove('dark');
         }
+        localStorage.setItem('wikirag_dark_mode', String(darkMode));
       }, [darkMode]);
 
       useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        localStorage.setItem('wikirag_language', lang);
+        // Persist non-secret UI preferences with the project settings as well.
+        fetch('/api/settings?project=tensura', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uiLanguage: lang, darkMode }),
+        }).catch(() => {});
+      }, [lang, darkMode]);
+
+      useEffect(() => {
+        localStorage.setItem('wikirag_active_tab', tab);
+        if (tab === 'graph' && graphData.nodes.length === 0) fetchGraphData(true);
+      }, [tab]);
+
+      useEffect(() => {
+        if (shouldAutoScrollRef.current) {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
       }, [messages]);
 
       useEffect(() => {
@@ -420,7 +523,7 @@
         fetchEntities();
         fetchConversations();
         fetch('/api/settings?project=tensura').then(r => r.ok ? r.json() : {}).then(saved => {
-          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: false}));
+          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: false, enableRetry: saved.enableRetry !== false}));
         }).catch(() => {});
       }, []);
 
@@ -461,7 +564,7 @@
         if (!silent) setLoadingEntities(true);
         try {
           const query = category ? `&category=${encodeURIComponent(category)}` : '';
-          const url = `/api/entities?limit=500${query}`;
+          const url = `/api/entities?limit=5000${query}`;
           const res = await fetch(url);
           if (res.ok) {
             const data = await res.json();
@@ -486,13 +589,93 @@
         }
       };
 
+      const getEntityGroup = (entity) => {
+        const categoryText = (entity.categories || []).join(' ').toLowerCase();
+        const nameText = (entity.entity || '').toLowerCase();
+        const info = entity.infobox || {};
+        if (/skill|magic|spell|ability|สกิล|เวทมนตร์/.test(categoryText + ' ' + nameText)) return 'skills';
+        if (/weapon|equipment|item|sword|armor|อาวุธ|อุปกรณ์|ไอเทม/.test(categoryText + ' ' + nameText)) return 'equipment';
+        if (/race|species|เผ่าพันธุ์|เผ่า/.test(categoryText)) return 'races';
+        if (/location|place|kingdom|city|ประเทศ|เมือง|สถานที่/.test(categoryText)) return 'locations';
+        if (/character|demon lord|true dragon|otherworlder|ตัวละคร/.test(categoryText) || info.species || info.gender) return 'characters';
+        return 'others';
+      };
+
+      const getRankScore = (entity) => {
+        const rank = String(entity.infobox?.rank || '').toLowerCase();
+        if (!rank) return -1;
+        const rankOrder = [
+          ['god', 1000], ['divine', 950], ['ultimate', 900], ['true dragon', 850],
+          ['legend', 800], ['mythic', 780], ['unique', 700], ['unique skill', 700],
+          ['extra', 600], ['rare', 500], ['s', 400], ['a', 300], ['b', 200],
+          ['c', 100], ['d', 50], ['e', 25], ['f', 10],
+        ];
+        const scoreByLabel = Object.fromEntries(rankOrder);
+        const matched = rankOrder.find(([label]) => new RegExp(`\\b${label}\\b`).test(rank));
+        const numeric = rank.match(/\d+(?:\.\d+)?/);
+        return matched ? scoreByLabel[matched[0]] : (numeric ? Number(numeric[0]) : -1);
+      };
+
+      const entityMatches = (entity, value, filter) => !filter || String(value || '').toLowerCase().includes(filter.toLowerCase());
+      const filteredEntities = entities
+        .filter(e => e.entity.toLowerCase().includes(searchEntityText.toLowerCase()))
+        .filter(e => entityGroup === 'all' || getEntityGroup(e) === entityGroup)
+        .filter(e => entityMatches(e, e.infobox?.species, entitySpeciesFilter))
+        .filter(e => entityMatches(e, e.infobox?.rank, entityRankFilter))
+        .filter(e => !entityMissingRankOnly || !e.infobox?.rank)
+        .filter(e => entityMatches(e, e.infobox?.status, entityStatusFilter))
+        .filter(e => entityMatches(e, (e.infobox?.affiliation || []).join(' '), entityAffiliationFilter))
+        .sort((a, b) => {
+          if (entitySort === 'rank-desc' || entitySort === 'rank-asc') {
+            const rankCompare = getRankScore(b) - getRankScore(a);
+            if (rankCompare !== 0) return entitySort === 'rank-desc' ? rankCompare : -rankCompare;
+          }
+          if (entitySort === 'type') {
+            const typeCompare = getEntityGroup(a).localeCompare(getEntityGroup(b));
+            if (typeCompare !== 0) return typeCompare;
+          }
+          const nameCompare = a.entity.localeCompare(b.entity, undefined, { sensitivity: 'base', numeric: true });
+          return entitySort === 'name-desc' ? -nameCompare : nameCompare;
+        });
+
+      const entityFilterOptions = (field) => [...new Set(entities.flatMap(e => {
+        const value = e.infobox?.[field];
+        return Array.isArray(value) ? value : value ? [value] : [];
+      }).map(String).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+      const exportEntities = (format) => {
+        const rows = filteredEntities.map(e => ({
+          entity: e.entity,
+          species: e.infobox?.species || '',
+          rank: e.infobox?.rank || '',
+          status: e.infobox?.status || '',
+          affiliation: e.infobox?.affiliation || [],
+          categories: e.categories || [],
+          canonical_url: e.canonical_url || '',
+        }));
+        const content = format === 'json'
+          ? JSON.stringify(rows, null, 2)
+          : [
+              'entity,species,rank,status,affiliation,categories,canonical_url',
+              ...rows.map(row => [row.entity, row.species, row.rank, row.status, row.affiliation.join('; '), row.categories.join('; '), row.canonical_url]
+                .map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')),
+            ].join('\n');
+        const blob = new Blob([content], {type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `wikirag-entities.${format}`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
       const fetchGraphData = async (silent = false) => {
         if (!silent) setGraphLoading(true);
         try {
           const res = await fetch('/api/graph?limit=120');
           if (res.ok) {
             const data = await res.json();
-            setGraphData(data);
+            setGraphData(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
           }
         } catch (e) {
           console.error("Failed to fetch graph data", e);
@@ -501,19 +684,36 @@
         }
       };
 
+      const visibleGraphData = useMemo(() => {
+        const query = graphSearch.trim().toLowerCase();
+        const nodes = graphData.nodes.filter(n => {
+          const type = String(n.entity_type || '').toLowerCase();
+          const matchesType = graphTypeFilter === 'all' || type === graphTypeFilter;
+          const matchesSearch = !query || String(n.name || n.id || '').toLowerCase().includes(query);
+          return matchesType && matchesSearch;
+        });
+        const nodeIds = new Set(nodes.map(n => n.id));
+        const edges = graphData.edges.filter(e => {
+          const matchesNodes = nodeIds.has(e.source) && nodeIds.has(e.target);
+          const matchesRelation = graphRelationFilter === 'all' || String(e.relation_type || '').toLowerCase() === graphRelationFilter.toLowerCase();
+          return matchesNodes && matchesRelation;
+        });
+        return { nodes, edges };
+      }, [graphData, graphTypeFilter, graphRelationFilter, graphSearch]);
+
       // Lightweight force simulation for graph
       useEffect(() => {
-        if (tab !== 'graph' || !canvasRef.current || graphData.nodes.length === 0) return;
+        if (tab !== 'graph' || !canvasRef.current || visibleGraphData.nodes.length === 0) return;
 
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         let width = (canvas.width = canvas.parentElement.clientWidth);
         let height = (canvas.height = canvas.parentElement.clientHeight);
 
-        const nodes = graphData.nodes.map((n, i) => ({
+        const nodes = visibleGraphData.nodes.map((n, i) => ({
           ...n,
-          x: width / 2 + (Math.random() - 0.5) * (width * 0.7),
-          y: height / 2 + (Math.random() - 0.5) * (height * 0.7),
+          x: graphSearch && String(n.name || n.id).toLowerCase().includes(graphSearch.toLowerCase()) ? width / 2 : width / 2 + (Math.random() - 0.5) * (width * 0.7),
+          y: graphSearch && String(n.name || n.id).toLowerCase().includes(graphSearch.toLowerCase()) ? height / 2 : height / 2 + (Math.random() - 0.5) * (height * 0.7),
           vx: 0,
           vy: 0,
           radius: n.entity_type === 'character' ? 14 : 10,
@@ -521,48 +721,84 @@
         }));
 
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
-        const edges = graphData.edges
+        const edges = visibleGraphData.edges
           .map(e => ({ ...e, sourceNode: nodeMap.get(e.source), targetNode: nodeMap.get(e.target) }))
           .filter(e => e.sourceNode && e.targetNode);
 
         let animationId;
+        let zoom = 1;
+        let panX = 0;
+        let panY = 0;
+        let simulationTicks = 0;
+        let pointerDown = null;
+        let draggedNode = null;
+        let didDrag = false;
+        const getCanvasPoint = (event) => {
+          const rect = canvas.getBoundingClientRect();
+          return { x: (event.clientX - rect.left - panX) / zoom, y: (event.clientY - rect.top - panY) / zoom };
+        };
+        const getScreenPoint = (event) => {
+          const rect = canvas.getBoundingClientRect();
+          return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        };
+        const findNodeAt = (point) => [...nodes].reverse().find(n => {
+          const dx = point.x - n.x;
+          const dy = point.y - n.y;
+          return Math.sqrt(dx * dx + dy * dy) <= n.radius + 8;
+        });
+        const distanceToSegment = (point, start, end) => {
+          const dx = end.x - start.x;
+          const dy = end.y - start.y;
+          const lengthSquared = dx * dx + dy * dy || 1;
+          const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+          const nearX = start.x + t * dx;
+          const nearY = start.y + t * dy;
+          return Math.hypot(point.x - nearX, point.y - nearY);
+        };
+        const findEdgeAt = (point) => [...edges].reverse().find(e => distanceToSegment(point, e.sourceNode, e.targetNode) <= 8);
         const render = () => {
-          for (let i = 0; i < nodes.length; i++) {
-            for (let j = i + 1; j < nodes.length; j++) {
-              let dx = nodes[j].x - nodes[i].x;
-              let dy = nodes[j].y - nodes[i].y;
-              let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-              if (dist < 120) {
-                let force = (120 - dist) / 120 * 0.5;
-                nodes[i].vx -= (dx / dist) * force;
-                nodes[i].vy -= (dy / dist) * force;
-                nodes[j].vx += (dx / dist) * force;
-                nodes[j].vy += (dy / dist) * force;
+          if (simulationTicks < 240) {
+            for (let i = 0; i < nodes.length; i++) {
+              for (let j = i + 1; j < nodes.length; j++) {
+                let dx = nodes[j].x - nodes[i].x;
+                let dy = nodes[j].y - nodes[i].y;
+                let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                if (dist < 120) {
+                  let force = (120 - dist) / 120 * 0.5;
+                  nodes[i].vx -= (dx / dist) * force;
+                  nodes[i].vy -= (dy / dist) * force;
+                  nodes[j].vx += (dx / dist) * force;
+                  nodes[j].vy += (dy / dist) * force;
+                }
               }
             }
-          }
 
-          for (const e of edges) {
-            let dx = e.targetNode.x - e.sourceNode.x;
-            let dy = e.targetNode.y - e.sourceNode.y;
-            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            let force = (dist - 80) * 0.01;
-            e.sourceNode.vx += (dx / dist) * force;
-            e.sourceNode.vy += (dy / dist) * force;
-            e.targetNode.vx -= (dx / dist) * force;
-            e.targetNode.vy -= (dy / dist) * force;
-          }
+            for (const e of edges) {
+              let dx = e.targetNode.x - e.sourceNode.x;
+              let dy = e.targetNode.y - e.sourceNode.y;
+              let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+              let force = (dist - 80) * 0.01;
+              e.sourceNode.vx += (dx / dist) * force;
+              e.sourceNode.vy += (dy / dist) * force;
+              e.targetNode.vx -= (dx / dist) * force;
+              e.targetNode.vy -= (dy / dist) * force;
+            }
 
-          for (const n of nodes) {
-            n.x += n.vx;
-            n.y += n.vy;
-            n.vx *= 0.85;
-            n.vy *= 0.85;
-            n.x = Math.max(n.radius, Math.min(width - n.radius, n.x));
-            n.y = Math.max(n.radius, Math.min(height - n.radius, n.y));
+            for (const n of nodes) {
+              n.x += n.vx;
+              n.y += n.vy;
+              n.vx *= 0.85;
+              n.vy *= 0.85;
+              n.x = Math.max(n.radius, Math.min(width - n.radius, n.x));
+              n.y = Math.max(n.radius, Math.min(height - n.radius, n.y));
+            }
+            simulationTicks += 1;
           }
 
           ctx.clearRect(0, 0, width, height);
+          ctx.save();
+          ctx.translate(panX, panY);
+          ctx.scale(zoom, zoom);
 
           ctx.lineWidth = 1;
           for (const e of edges) {
@@ -592,13 +828,78 @@
             ctx.font = '500 11px Inter, sans-serif';
             ctx.fillText(n.name, n.x + n.radius + 5, n.y + 4);
           }
+          ctx.restore();
 
           animationId = requestAnimationFrame(render);
         };
 
         render();
-        return () => cancelAnimationFrame(animationId);
-      }, [tab, graphData, darkMode]);
+
+        const handlePointerDown = (event) => {
+          const screenPoint = getScreenPoint(event);
+          pointerDown = screenPoint;
+          draggedNode = findNodeAt(getCanvasPoint(event));
+          didDrag = false;
+          canvas.setPointerCapture?.(event.pointerId);
+          canvas.style.cursor = draggedNode ? 'grabbing' : 'move';
+        };
+        const handlePointerMove = (event) => {
+          const screenPoint = getScreenPoint(event);
+          const point = getCanvasPoint(event);
+          if (!pointerDown) {
+            canvas.style.cursor = findNodeAt(point) ? 'pointer' : 'grab';
+            return;
+          }
+          if (Math.abs(screenPoint.x - pointerDown.x) + Math.abs(screenPoint.y - pointerDown.y) > 4) didDrag = true;
+          if (draggedNode) {
+            draggedNode.x = Math.max(draggedNode.radius, Math.min(width - draggedNode.radius, point.x));
+            draggedNode.y = Math.max(draggedNode.radius, Math.min(height - draggedNode.radius, point.y));
+            draggedNode.vx = 0;
+            draggedNode.vy = 0;
+          } else {
+            panX += screenPoint.x - pointerDown.x;
+            panY += screenPoint.y - pointerDown.y;
+            pointerDown = screenPoint;
+          }
+        };
+        const handlePointerUp = (event) => {
+          const point = getCanvasPoint(event);
+          const clickedNode = !didDrag && findNodeAt(point);
+          const clickedEdge = !didDrag && !clickedNode && findEdgeAt(point);
+          if (clickedNode) fetchEntityDetail(clickedNode.name);
+          if (clickedEdge) setSelectedRelationship(clickedEdge);
+          pointerDown = null;
+          draggedNode = null;
+          canvas.style.cursor = clickedNode ? 'pointer' : 'grab';
+          canvas.releasePointerCapture?.(event.pointerId);
+        };
+        const handleWheel = (event) => {
+          event.preventDefault();
+          const screenPoint = getScreenPoint(event);
+          const oldZoom = zoom;
+          zoom = Math.max(0.25, Math.min(3.5, zoom * (event.deltaY < 0 ? 1.1 : 0.9)));
+          panX = screenPoint.x - ((screenPoint.x - panX) / oldZoom) * zoom;
+          panY = screenPoint.y - ((screenPoint.y - panY) / oldZoom) * zoom;
+        };
+        const handlePointerLeave = () => {
+          if (!pointerDown) canvas.style.cursor = 'grab';
+        };
+        canvas.addEventListener('pointerdown', handlePointerDown);
+        canvas.addEventListener('pointermove', handlePointerMove);
+        canvas.addEventListener('pointerup', handlePointerUp);
+        canvas.addEventListener('pointerleave', handlePointerLeave);
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
+        canvas.style.cursor = 'grab';
+
+        return () => {
+          cancelAnimationFrame(animationId);
+          canvas.removeEventListener('pointerdown', handlePointerDown);
+          canvas.removeEventListener('pointermove', handlePointerMove);
+          canvas.removeEventListener('pointerup', handlePointerUp);
+          canvas.removeEventListener('pointerleave', handlePointerLeave);
+          canvas.removeEventListener('wheel', handleWheel);
+        };
+      }, [tab, visibleGraphData, graphSearch, darkMode, graphViewReset]);
 
       // Handle Streaming Chat via SSE
       const handleSendMessage = async (e, overrideQuery = null) => {
@@ -616,6 +917,9 @@
         }
         setIsStreaming(true);
         setActiveSources([]);
+        const startedAt = performance.now();
+        let streamedText = '';
+        setChatMetrics({status: 'running'});
 
         setMessages(prev => [...prev, { role: 'assistant', content: '', sources: [] }]);
 
@@ -631,6 +935,8 @@
               project: 'tensura',
               llm_provider: settings.provider,
                llm_model: settings.model,
+               fallback_model: settings.fallbackModel || undefined,
+               enable_retry: settings.enableRetry !== false,
                api_key: settings.apiKey || undefined,
                base_url: settings.baseUrl || undefined,
                max_output_tokens: parseInt(settings.maxTokens) || 1024,
@@ -686,6 +992,7 @@
               } else if (eventType === 'token') {
                 try {
                   const tokenObj = JSON.parse(eventData);
+                  streamedText += tokenObj.token || '';
                   setMessages(prev => {
                     const next = [...prev];
                     next[next.length - 1].content += tokenObj.token;
@@ -723,6 +1030,7 @@
         } finally {
           abortControllerRef.current = null;
           setIsStreaming(false);
+          setChatMetrics({status: 'done', seconds: ((performance.now() - startedAt) / 1000).toFixed(1), completionTokens: Math.ceil(streamedText.length / 4)});
           fetchConversations();
           fetchAdminStatus();
         }
@@ -853,13 +1161,17 @@
             
             {/* TAB 1: CHAT */}
             {tab === 'chat' && (
-               <div className="grid h-full workspace-grid">
+               <div className="grid h-full min-h-0 workspace-grid">
                 {/* Persistent conversation history */}
-                <aside className="hidden md:flex w-64 flex-col border-r border-hairline dark:border-surface-dark-elevated bg-surface-soft dark:bg-surface-dark-soft p-3">
+                <aside className="hidden md:flex w-64 min-h-0 flex-col overflow-hidden border-r border-hairline dark:border-surface-dark-elevated bg-surface-soft dark:bg-surface-dark-soft p-3">
                   <button onClick={createNewChat} className="w-full mb-3 flex items-center justify-center gap-2 bg-primary text-on-primary rounded-md py-2 text-sm font-medium hover:bg-primary-active transition">
                     <i className="fa-solid fa-plus"></i>{lang === 'th' ? 'แชทใหม่' : 'New chat'}
                   </button>
-                  <div className="flex-1 overflow-y-auto space-y-1">
+                  <div className="flex gap-2 mb-3">
+                    <button onClick={exportChat} className="flex-1 border border-hairline dark:border-surface-dark-elevated rounded-md py-1.5 text-[11px] text-muted dark:text-on-dark-soft hover:text-primary hover:border-primary transition"><i className="fa-solid fa-download mr-1"></i>{lang === 'th' ? 'ส่งออก' : 'Export'}</button>
+                    <button onClick={clearChatHistory} className="flex-1 border border-hairline dark:border-surface-dark-elevated rounded-md py-1.5 text-[11px] text-muted dark:text-on-dark-soft hover:text-red-500 hover:border-red-400 transition"><i className="fa-solid fa-trash mr-1"></i>{lang === 'th' ? 'ล้างทั้งหมด' : 'Clear'}</button>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 pr-1">
                     {historyLoading && <div className="text-xs text-muted p-2">Loading...</div>}
                     {conversations.map(c => (
                       <div key={c.id} className={`group flex items-center gap-1 rounded-md ${conversationId === c.id ? 'bg-canvas dark:bg-surface-dark' : 'hover:bg-canvas/70 dark:hover:bg-surface-dark/70'}`}>
@@ -885,9 +1197,11 @@
                     <div className="hidden sm:flex items-center gap-2 text-[11px] text-muted dark:text-on-dark-soft">
                       <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
                       <span>{settings.provider} / {settings.model}</span>
+                      {chatMetrics?.status === 'running' && <span className="text-primary">· กำลังตอบ</span>}
+                      {chatMetrics?.status === 'done' && <span>· {chatMetrics.completionTokens || 0} tokens · {chatMetrics.seconds}s</span>}
                     </div>
                   </div>
-                  <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full">
+                  <div ref={messagesScrollRef} onScroll={handleMessagesScroll} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full">
                     {messages.map((m, idx) => (
                       <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-2xl rounded-lg p-5 transition ${
@@ -1029,11 +1343,11 @@
 
             {/* TAB 2: ENTITIES */}
             {tab === 'entities' && (
-              <div className="h-full flex flex-col p-8 overflow-y-auto max-w-6xl mx-auto">
+              <div className="h-full min-h-0 flex flex-col p-8 overflow-y-auto overscroll-contain max-w-6xl mx-auto">
                 <div className="flex items-end justify-between mb-8 pb-4 border-b border-hairline dark:border-surface-dark-elevated">
                   <div>
                     <h2 className="font-display text-4xl font-normal text-ink dark:text-on-dark tracking-tight">{t.entities}</h2>
-                    <p className="text-sm text-muted dark:text-muted-soft mt-1">Structured Character Profiles & Portable Infoboxes</p>
+                    <p className="text-sm text-muted dark:text-muted-soft mt-1">แยกดูตัวละคร สกิล อาวุธ/อุปกรณ์ เผ่าพันธุ์ และข้อมูลจาก Wiki</p>
                   </div>
                    <div className="flex items-center gap-2">
                      <input 
@@ -1042,11 +1356,71 @@
                        onChange={(e) => setSearchEntityText(e.target.value)}
                        placeholder={t.searchEntity}
                        className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-3.5 py-2 text-sm w-72 focus:outline-none focus:border-primary"
-                     />
-                     <button onClick={() => fetchEntities()} disabled={loadingEntities} title="Refresh entities" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-primary hover:bg-surface-card dark:hover:bg-surface-dark-soft transition">
+                   />
+                    <button onClick={() => fetchEntities()} disabled={loadingEntities} title="Refresh entities" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-primary hover:bg-surface-card dark:hover:bg-surface-dark-soft transition">
                        <i className={`fa-solid fa-arrows-rotate ${loadingEntities ? 'fa-spin' : ''}`}></i>
                      </button>
+                     <select
+                       value={entitySort}
+                       onChange={(e) => setEntitySort(e.target.value)}
+                       aria-label={lang === 'th' ? 'เรียงลำดับ Entity' : 'Sort entities'}
+                       className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-3 py-2 text-xs text-ink dark:text-on-dark focus:outline-none focus:border-primary"
+                     >
+                       <option value="name-asc">{lang === 'th' ? 'ชื่อ A–Z' : 'Name A–Z'}</option>
+                       <option value="name-desc">{lang === 'th' ? 'ชื่อ Z–A' : 'Name Z–A'}</option>
+                       <option value="type">{lang === 'th' ? 'ตามประเภท' : 'By type'}</option>
+                       <option value="rank-desc">{lang === 'th' ? 'ระดับสูง → ต่ำ' : 'Rank high → low'}</option>
+                       <option value="rank-asc">{lang === 'th' ? 'ระดับต่ำ → สูง' : 'Rank low → high'}</option>
+                     </select>
                    </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-6 -mt-3">
+                  {[
+                    ['all', lang === 'th' ? 'ทั้งหมด' : 'All'],
+                    ['characters', lang === 'th' ? 'ตัวละคร' : 'Characters'],
+                    ['skills', lang === 'th' ? 'สกิล / เวท' : 'Skills / Magic'],
+                    ['equipment', lang === 'th' ? 'อาวุธ / อุปกรณ์' : 'Weapons / Equipment'],
+                    ['races', lang === 'th' ? 'เผ่าพันธุ์' : 'Races'],
+                    ['locations', lang === 'th' ? 'สถานที่' : 'Locations'],
+                    ['others', lang === 'th' ? 'อื่น ๆ' : 'Other'],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => { setEntityGroup(key); setEntitySort(['skills', 'equipment', 'races'].includes(key) ? 'rank-desc' : 'name-asc'); }}
+                      className={`px-3 py-1.5 rounded-full border text-xs font-medium transition ${entityGroup === key ? 'bg-primary text-white border-primary' : 'border-hairline dark:border-surface-dark-elevated text-muted dark:text-on-dark-soft hover:border-primary hover:text-primary'}`}
+                    >
+                      {label} <span className="ml-1 opacity-70">{key === 'all' ? entities.length : entities.filter(e => getEntityGroup(e) === key).length}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-5">
+                  {[
+                    ['species', entitySpeciesFilter, setEntitySpeciesFilter, lang === 'th' ? 'เผ่าพันธุ์ทั้งหมด' : 'All species'],
+                    ['rank', entityRankFilter, setEntityRankFilter, lang === 'th' ? 'ระดับทั้งหมด' : 'All ranks'],
+                    ['status', entityStatusFilter, setEntityStatusFilter, lang === 'th' ? 'สถานะทั้งหมด' : 'All statuses'],
+                    ['affiliation', entityAffiliationFilter, setEntityAffiliationFilter, lang === 'th' ? 'สังกัดทั้งหมด' : 'All affiliations'],
+                  ].map(([field, value, setter, placeholder]) => (
+                    <select key={field} value={value} onChange={(e) => { setter(e.target.value); setEntityVisibleLimit(60); }} className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-3 py-2 text-xs text-ink dark:text-on-dark focus:outline-none focus:border-primary">
+                      <option value="">{placeholder}</option>
+                      {entityFilterOptions(field).map(option => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between gap-3 mb-5 text-xs text-muted dark:text-on-dark-soft">
+                  <div className="flex items-center gap-3">
+                    <span>{filteredEntities.length} {lang === 'th' ? 'รายการที่ตรงกับตัวกรอง' : 'matching entities'}</span>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={entityMissingRankOnly} onChange={(e) => { setEntityMissingRankOnly(e.target.checked); setEntityVisibleLimit(60); }} className="accent-primary" />
+                      {lang === 'th' ? 'เฉพาะที่ไม่มีระดับ' : 'Missing rank only'}
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => exportEntities('json')} className="border border-hairline dark:border-surface-dark-elevated rounded-md px-2.5 py-1.5 hover:border-primary hover:text-primary transition"><i className="fa-solid fa-download mr-1"></i>JSON</button>
+                    <button onClick={() => exportEntities('csv')} className="border border-hairline dark:border-surface-dark-elevated rounded-md px-2.5 py-1.5 hover:border-primary hover:text-primary transition"><i className="fa-solid fa-download mr-1"></i>CSV</button>
+                  </div>
                 </div>
 
                 {loadingEntities ? (
@@ -1055,14 +1429,15 @@
                   <div className="text-center py-24 text-muted text-sm">{t.noEntities}</div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {entities
-                      .filter(e => e.entity.toLowerCase().includes(searchEntityText.toLowerCase()))
-                      .map((ent, idx) => (
+                    {filteredEntities.slice(0, entityVisibleLimit).map((ent, idx) => (
                         <div key={idx} className="bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-lg p-6 flex flex-col justify-between hover:border-primary/50 transition">
                           <div>
                             <h3 className="font-display text-2xl font-normal text-ink dark:text-on-dark tracking-tight">{ent.entity}</h3>
                             {ent.infobox?.species && (
                               <p className="text-xs font-mono uppercase tracking-wider text-primary mt-1">{ent.infobox.species}</p>
+                            )}
+                            {ent.infobox?.rank && (
+                              <p className="text-xs text-muted dark:text-on-dark-soft mt-2"><span className="font-medium">{lang === 'th' ? 'ระดับ' : 'Rank'}:</span> {ent.infobox.rank}</p>
                             )}
                             <div className="flex flex-wrap gap-1.5 mt-3 mb-4">
                               {ent.categories.slice(0, 3).map((c, ci) => (
@@ -1088,6 +1463,11 @@
                       ))}
                   </div>
                 )}
+                {!loadingEntities && filteredEntities.length > entityVisibleLimit && (
+                  <button onClick={() => setEntityVisibleLimit(limit => limit + 60)} className="mx-auto mt-6 border border-primary text-primary hover:bg-primary hover:text-white rounded-md px-5 py-2 text-sm transition">
+                    {lang === 'th' ? `โหลดเพิ่ม (${filteredEntities.length - entityVisibleLimit} รายการ)` : `Load more (${filteredEntities.length - entityVisibleLimit} remaining)`}
+                  </button>
+                )}
               </div>
             )}
 
@@ -1100,23 +1480,31 @@
                       <AnthropicSpike className="w-5 h-5 text-primary" />
                       <span>{t.graph}</span>
                     </h2>
-                    <p className="text-xs text-muted dark:text-muted-soft">Interactive Entity & Relationship Network</p>
+                    <p className="text-xs text-muted dark:text-muted-soft">คลิกวงกลมดูรายละเอียด · ลากจัดตำแหน่ง/เลื่อนกราฟ · ล้อเมาส์ซูม</p>
                   </div>
-                  <button 
-                    onClick={fetchGraphData}
-                    className="text-xs bg-primary hover:bg-primary-active text-on-primary font-medium px-4 py-2 rounded-md transition shadow-xs flex items-center gap-2"
-                  >
-                    <i className="fa-solid fa-arrows-rotate"></i>
-                     <span>{graphLoading ? 'Updating...' : 'Refresh Graph'}</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <input value={graphSearch} onChange={(e) => setGraphSearch(e.target.value)} placeholder="ค้นหาตัวละคร..." className="w-44 bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-3 py-2 text-xs text-ink dark:text-on-dark focus:outline-none focus:border-primary" />
+                    <select value={graphTypeFilter} onChange={(e) => setGraphTypeFilter(e.target.value)} className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-2 py-2 text-xs text-ink dark:text-on-dark">
+                      <option value="all">ทุกประเภท</option>
+                      <option value="character">ตัวละคร</option>
+                      <option value="skill">สกิล</option>
+                      <option value="location">สถานที่</option>
+                    </select>
+                    <select value={graphRelationFilter} onChange={(e) => setGraphRelationFilter(e.target.value)} className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-2 py-2 text-xs text-ink dark:text-on-dark">
+                      <option value="all">ทุกความสัมพันธ์</option>
+                      {[...new Set(graphData.edges.map(e => e.relation_type).filter(Boolean))].sort().map(rel => <option key={rel} value={rel}>{rel}</option>)}
+                    </select>
+                    <button onClick={() => { setGraphViewReset(v => v + 1); setSelectedRelationship(null); }} title="Reset view" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary transition"><i className="fa-solid fa-crosshairs"></i></button>
+                    <button onClick={fetchGraphData} className="text-xs bg-primary hover:bg-primary-active text-on-primary font-medium px-4 py-2 rounded-md transition shadow-xs flex items-center gap-2"><i className="fa-solid fa-arrows-rotate"></i><span>{graphLoading ? 'Updating...' : 'Refresh Graph'}</span></button>
+                  </div>
                 </div>
 
-                <div className="flex-1 bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-lg overflow-hidden relative shadow-inner">
+                <div className="flex-1 min-h-0 bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-lg overflow-hidden relative shadow-inner">
                   {graphLoading ? (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <i className="fa-solid fa-circle-notch fa-spin text-3xl text-primary"></i>
                     </div>
-                  ) : graphData.nodes.length === 0 ? (
+                  ) : visibleGraphData.nodes.length === 0 ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center text-muted text-xs p-6 text-center">
                       <AnthropicSpike className="w-10 h-10 text-hairline dark:text-surface-dark-elevated mb-3" />
                       No graph data indexed yet. Run the crawler & parser to build character relationship triples.
@@ -1124,8 +1512,16 @@
                   ) : (
                     <canvas 
                       ref={canvasRef} 
-                      className="w-full h-full cursor-grab active:cursor-grabbing"
+                      className="w-full h-full cursor-grab active:cursor-grabbing touch-none"
                     />
+                  )}
+                  {selectedRelationship && (
+                    <div className="absolute right-4 top-4 w-64 bg-canvas/95 dark:bg-surface-dark/95 border border-primary/40 rounded-lg p-4 shadow-xl text-xs z-10">
+                      <div className="flex items-center justify-between mb-3"><span className="font-semibold text-primary">Relationship</span><button onClick={() => setSelectedRelationship(null)} className="text-muted hover:text-primary"><i className="fa-solid fa-xmark"></i></button></div>
+                      <div className="font-medium text-ink dark:text-on-dark">{selectedRelationship.source} → {selectedRelationship.target}</div>
+                      <div className="mt-2 text-muted dark:text-on-dark-soft">ประเภท: <span className="text-primary font-medium">{selectedRelationship.relation_type}</span></div>
+                      <div className="mt-1 text-muted dark:text-on-dark-soft">ความมั่นใจ: {Math.round((selectedRelationship.confidence || 0) * 100)}%</div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1133,7 +1529,7 @@
 
             {/* TAB 3: ADMIN & SYNC */}
             {tab === 'admin' && (
-              <div className="h-full p-8 overflow-y-auto max-w-4xl mx-auto space-y-8">
+              <div className="h-full min-h-0 p-8 overflow-y-auto overscroll-contain max-w-4xl mx-auto space-y-8">
                 <div>
                   <h2 className="font-display text-4xl font-normal text-ink dark:text-on-dark tracking-tight">{t.admin}</h2>
                   <p className="text-sm text-muted dark:text-muted-soft mt-1">Live Ingestion Watermarks & Knowledge Base Sync</p>
@@ -1406,6 +1802,14 @@
 
                   <div>
                     <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.modelName}</label>
+                    {LLM_MODEL_PRESETS[settings.provider]?.length > 0 && (
+                      <select value={LLM_MODEL_PRESETS[settings.provider].includes(settings.model) ? settings.model : ''}
+                        onChange={(e) => e.target.value && setSettings({...settings, model: e.target.value})}
+                        className="w-full mb-2 bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary text-xs">
+                        <option value="">เลือกโมเดลที่บันทึกไว้ / Select a model</option>
+                        {LLM_MODEL_PRESETS[settings.provider].map(model => <option key={model} value={model}>{model}</option>)}
+                      </select>
+                    )}
                     <input 
                       type="text" 
                       value={settings.model} 
@@ -1413,6 +1817,9 @@
                       onChange={(e) => setSettings({...settings, model: e.target.value})}
                       className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary font-mono text-[11px]"
                     />
+                    <input type="text" value={settings.fallbackModel || ''} onChange={(e) => setSettings({...settings, fallbackModel: e.target.value})} placeholder={settings.provider === 'openrouter' ? 'โมเดลสำรองเมื่อโมเดลหลักล้มเหลว (ไม่บังคับ)' : 'Fallback model (optional)'} className="w-full mt-2 bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary font-mono text-[11px]" />
+                    <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">ใช้โมเดลนี้อัตโนมัติเมื่อโมเดลหลักตอบไม่ได้หรือโดน rate limit</p>
+                    {settings.provider === 'openrouter' && <label className="mt-2 inline-flex items-center gap-2 text-xs text-ink dark:text-on-dark cursor-pointer"><input type="checkbox" checked={settings.enableRetry !== false} onChange={(e) => setSettings({...settings, enableRetry: e.target.checked})} className="accent-primary" />เปิด Retry อัตโนมัติเมื่อเจอ 429 / server error</label>}
                   </div>
 
                    {settings.provider !== 'ollama' && (
@@ -1436,6 +1843,14 @@
                          className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary font-mono text-[11px]" />
                      </div>
                    )}
+
+                   <div className="flex items-center gap-3">
+                     <button onClick={testProvider} disabled={providerTestStatus === 'testing'} className="border border-primary text-primary hover:bg-primary hover:text-white disabled:opacity-50 rounded-md px-3 py-2 text-xs transition">
+                       <i className={`fa-solid ${providerTestStatus === 'testing' ? 'fa-spinner fa-spin' : 'fa-plug'} mr-1.5`}></i>{lang === 'th' ? 'ทดสอบ Provider' : 'Test provider'}
+                     </button>
+                     {providerTestStatus === 'ok' && <span className="text-xs text-green-600 dark:text-green-400">✓ เชื่อมต่อสำเร็จ</span>}
+                     {providerTestStatus === 'error' && <span className="text-xs text-red-600 dark:text-red-400">✕ เชื่อมต่อไม่สำเร็จ</span>}
+                   </div>
 
                    <div>
                      <label className="block font-medium mb-1 text-ink dark:text-on-dark">บุคลิกและคำสั่ง AI</label>
@@ -1515,16 +1930,16 @@
                   </details>
 
                   <div>
-                     <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.topK}: {settings.topK} <span className="text-muted dark:text-on-dark-soft font-normal">(สูงสุด 30)</span></label>
+                     <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.topK}: {settings.topK} <span className="text-muted dark:text-on-dark-soft font-normal">(สูงสุด 96)</span></label>
                     <input 
                       type="range" 
                       min="1" 
-                       max="30" 
+                       max="96"
                       value={settings.topK} 
                       onChange={(e) => setSettings({...settings, topK: e.target.value})}
                        className="w-full accent-primary"
                      />
-                     <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">ค่าแนะนำ 5–10 · ค่าสูงจะค้นข้อมูลมากขึ้นแต่ใช้ context และเวลาเพิ่มขึ้น</p>
+                     <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">ค่าแนะนำ 5–10 · สูงสุด 96 · ค่าสูงจะใช้ context, RAM และเวลาเพิ่มขึ้น</p>
                   </div>
 
                    <div className="flex items-center justify-between py-1">
@@ -1555,6 +1970,11 @@
                 </div>
 
                 <div className="pt-4 border-t border-hairline dark:border-surface-dark-elevated">
+                  <div className="flex gap-2 mb-3">
+                    <button onClick={exportSettings} className="flex-1 border border-hairline dark:border-surface-dark-elevated rounded-md py-2 text-xs text-muted dark:text-on-dark-soft hover:text-primary hover:border-primary transition"><i className="fa-solid fa-download mr-1"></i>Export</button>
+                    <button onClick={() => settingsFileInputRef.current?.click()} className="flex-1 border border-hairline dark:border-surface-dark-elevated rounded-md py-2 text-xs text-muted dark:text-on-dark-soft hover:text-primary hover:border-primary transition"><i className="fa-solid fa-upload mr-1"></i>Import</button>
+                    <input ref={settingsFileInputRef} type="file" accept="application/json" onChange={importSettings} className="hidden" />
+                  </div>
                   <button 
                     onClick={handleSaveSettings}
                     className="w-full bg-primary hover:bg-primary-active text-on-primary font-medium py-2.5 rounded-md shadow-xs transition text-sm"

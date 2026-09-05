@@ -2,6 +2,8 @@
 
 [English version](README_EN.md)
 
+**รุ่นปัจจุบัน: v2.0.1** · ดูรายการเปลี่ยนแปลงที่ [CHANGELOG.md](CHANGELOG.md)
+
 WikiRAG คือแพลตฟอร์ม Retrieval-Augmented Generation (RAG) แบบ local-first สำหรับเว็บวิกิและฐานความรู้ ภายใน repository นี้มีการตั้งค่าสำหรับฐานความรู้ Tensura, เครื่องมือ CLI, เว็บแอป FastAPI, ระบบค้นหาหลายภาษา, หน้าสำรวจตัวละคร, โครงข่ายความสัมพันธ์ และระบบ LLM ที่เปลี่ยนผู้ให้บริการได้
 
 ## ภาพรวมการทำงาน

@@ -221,6 +221,25 @@ def save_settings(payload: Dict[str, Any], project: Optional[str] = None):
     return _CHAT_HISTORY.save_settings({k: v for k, v in payload.items() if k not in secret_keys}, project)
 
 
+@app.post("/api/llm/test")
+def test_llm_provider(payload: Dict[str, Any]):
+    """Tests an LLM provider without persisting its API key or settings."""
+    try:
+        provider = payload.get("provider") or "openrouter"
+        model = payload.get("model") or "minimax/minimax-m3:free"
+        llm = get_llm_provider(
+            provider_name=provider,
+            model_name=model,
+            api_key=payload.get("apiKey"),
+            base_url=payload.get("baseUrl"),
+        )
+        response = llm.generate("Reply with exactly: OK", temperature=0, max_tokens=8)
+        return {"ok": True, "provider": provider, "model": model, "preview": response.text[:40]}
+    except Exception as e:
+        logger.warning("LLM provider test failed for %s: %s", payload.get("provider", "unknown"), str(e)[:300])
+        raise HTTPException(status_code=502, detail="Provider test failed. Check provider, model, API key, and server logs.")
+
+
 @app.get("/api/projects", response_model=List[ProjectInfo])
 def list_projects():
     """Lists available wiki projects in the projects/ folder."""
@@ -306,6 +325,7 @@ async def chat_stream(req: ChatRequest):
             model_name=req.llm_model or cfg.llm.default_model,
             api_key=req.api_key,
             base_url=req.base_url,
+            retry_enabled=req.enable_retry,
         )
         generator = GroundedAnswerGenerator(config=cfg, llm_provider=llm)
         if req.system_prompt and req.system_prompt.strip():
@@ -340,8 +360,32 @@ async def chat_stream(req: ChatRequest):
                     await asyncio.sleep(0.005)
                 _CHAT_HISTORY.add_message(conversation_id, "assistant", "".join(answer_parts), sources_data, chunks)
             except Exception as err:
-                logger.error(f"Generation error during stream: {err}")
-                err_payload = json.dumps({"error": str(err)})
+                logger.warning("Primary LLM generation failed: %s", str(err)[:300])
+                fallback_error = None
+                if req.fallback_model and req.fallback_model != (req.llm_model or cfg.llm.default_model):
+                    try:
+                        fallback_llm = get_llm_provider(
+                            provider_name=req.llm_provider or cfg.llm.default_provider,
+                            model_name=req.fallback_model,
+                            api_key=req.api_key,
+                            base_url=req.base_url,
+                            retry_enabled=req.enable_retry,
+                        )
+                        fallback_generator = GroundedAnswerGenerator(config=cfg, llm_provider=fallback_llm)
+                        if req.system_prompt and req.system_prompt.strip():
+                            fallback_generator.system_prompt = req.system_prompt.strip()
+                        answer_parts = []
+                        for token in fallback_generator.stream_answer(req.message, chunks, temperature=req.temperature, max_output_tokens=req.max_output_tokens):
+                            answer_parts.append(token)
+                            yield f"event: token\ndata: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0.005)
+                        _CHAT_HISTORY.add_message(conversation_id, "assistant", "".join(answer_parts), sources_data, chunks)
+                        yield f"event: fallback\ndata: {json.dumps({'model': req.fallback_model}, ensure_ascii=False)}\n\n"
+                    except Exception as fallback_err:
+                        fallback_error = fallback_err
+                        logger.warning("Fallback LLM generation failed: %s", str(fallback_err)[:300])
+                error_text = f"{err}; fallback failed: {fallback_error}" if fallback_error else str(err)
+                err_payload = json.dumps({"error": error_text}, ensure_ascii=False)
                 yield f"event: error\ndata: {err_payload}\n\n"
 
             yield "event: done\ndata: {}\n\n"
