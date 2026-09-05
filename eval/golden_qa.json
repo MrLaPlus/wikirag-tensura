@@ -1,0 +1,74 @@
+[
+  {
+    "id": "q01",
+    "question": "ริมุรุ เทมเพสต์ เป็นเผ่าพันธุ์อะไร",
+    "archetype": "factual",
+    "language": "th",
+    "expected_entities": ["Rimuru Tempest"],
+    "expected_answer_keywords": ["Slime", "Ultimate Slime", "True Dragon", "สไลม์"],
+    "notes": "Factual query in Thai"
+  },
+  {
+    "id": "q02",
+    "question": "What is Rimuru's species and official disaster rank?",
+    "archetype": "factual",
+    "language": "en",
+    "expected_entities": ["Rimuru Tempest"],
+    "expected_answer_keywords": ["Ultimate Slime", "Demon Lord", "Catastrophe", "Special S"],
+    "notes": "Factual query in English"
+  },
+  {
+    "id": "q03",
+    "question": "ริมุรุ มีความสัมพันธ์ยังไงกับเวลโดร่า เทมเพสต์",
+    "archetype": "relational",
+    "language": "th",
+    "expected_entities": ["Rimuru Tempest", "Veldora Tempest"],
+    "expected_answer_keywords": ["เพื่อน", "สหาย", "friend", "sworn friend", "มังกรพายุ"],
+    "notes": "Relational query in Thai"
+  },
+  {
+    "id": "q04",
+    "question": "What is the relationship between Rimuru Tempest and Guy Crimson?",
+    "archetype": "relational",
+    "language": "en",
+    "expected_entities": ["Rimuru Tempest", "Guy Crimson"],
+    "expected_answer_keywords": ["Octagram", "Demon Lord", "allies", "fellow"],
+    "notes": "Relational query in English"
+  },
+  {
+    "id": "q05",
+    "question": "สกิล อัลติเมทสกิล ราฟาเอล พัฒนามาจากสกิลอะไร",
+    "archetype": "timeline",
+    "language": "th",
+    "expected_entities": ["Great Sage", "Raphael", "Rimuru Tempest"],
+    "expected_answer_keywords": ["มหาปราชญ์", "Great Sage", "วิวัฒนาการ"],
+    "notes": "Skill evolution query in Thai"
+  },
+  {
+    "id": "q06",
+    "question": "Who are the Twelve Guardian Lords serving Rimuru?",
+    "archetype": "relational",
+    "language": "en",
+    "expected_entities": ["Twelve Guardian Lords", "Rimuru Tempest"],
+    "expected_answer_keywords": ["Benimaru", "Shion", "Diablo", "subordinates"],
+    "notes": "Subordinates list query in English"
+  },
+  {
+    "id": "q07",
+    "question": "เมืองหลวงของสหพันธรัฐจูร่าเทมเพสต์ชื่อว่าอะไร",
+    "archetype": "factual",
+    "language": "th",
+    "expected_entities": ["Jura Tempest Federation", "Rimuru City"],
+    "expected_answer_keywords": ["Rimuru", "ริมุรุ", "เมืองหลวง"],
+    "notes": "Location query in Thai"
+  },
+  {
+    "id": "q08",
+    "question": "What are the names of the True Dragons?",
+    "archetype": "factual",
+    "language": "en",
+    "expected_entities": ["True Dragon"],
+    "expected_answer_keywords": ["Veldanava", "Velzard", "Velgrynd", "Veldora"],
+    "notes": "Lore entity list in English"
+  }
+]

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikirag"
+version = "0.1.0"
+description = "Production-quality, fully-local RAG platform for fandom and knowledge wikis"
+readme = "README.md"
+authors = [{ name = "Solo Developer" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.12.0",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0.1",
+    "httpx>=0.27.0",
+    "mwparserfromhell>=0.7.2",
+    "beautifulsoup4>=4.12.0",
+    "lancedb>=0.17.0",
+    "sentence-transformers>=3.0.0",
+    "torch>=2.2.0",
+    "rich>=13.7.0",
+    "tqdm>=4.66.0",
+    "python-dotenv>=1.0.1",
+    "tantivy>=0.22.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "black>=24.0.0",
+    "ruff>=0.4.0",
+]
+cloud = [
+    "openai>=1.30.0",
+    "anthropic>=0.25.0",
+    "google-genai>=0.1.1",
+]
+web = [
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.0",
+    "trafilatura>=2.0.0",
+]
+
+[project.scripts]
+wikirag = "wikirag.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

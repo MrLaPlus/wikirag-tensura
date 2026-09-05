@@ -1,0 +1,73 @@
+project:
+  name: tensura
+  title: "That Time I Got Reincarnated as a Slime Wiki"
+  description: "Tensura Fandom Wiki Knowledge Base"
+  license: "CC BY-SA 3.0"
+  attribution_required: true
+
+source:
+  type: mediawiki
+  api_url: "https://tensura.fandom.com/api.php"
+  base_url: "https://tensura.fandom.com/wiki"
+  namespace: 0
+  user_agent: "WikiRAG/0.1.0 (Localhost RAG Research; contact@tensurafan.local)"
+  request_delay_seconds: 0.5
+  batch_size: 50
+  checkpoint_interval: 100
+
+storage:
+  data_dir: "./data/tensura"
+  raw_dir: "./data/tensura/raw"
+  parsed_dir: "./data/tensura/parsed"
+  embeddings_cache_dir: "./data/tensura/embeddings"
+  vectordb_dir: "./data/tensura/vectordb"
+  alias_map_path: "./data/tensura/aliases.json"
+  state_file: "./data/tensura/state.json"
+  failed_pages_path: "./data/tensura/failed_pages.jsonl"
+
+chunking:
+  target_min_tokens: 400
+  target_max_tokens: 800
+  overlap_percentage: 0.15
+  separate_infobox_chunk: true
+  prepend_contextual_header: true
+
+embedding:
+  provider: sentence-transformers
+  model_name: "BAAI/bge-m3"
+  fallback_model: "BAAI/bge-m3"
+  device: "cpu"
+  backend: "onnx"
+  quantization: "int8"
+  batch_size: 8
+  normalize: true
+
+vectorstore:
+  type: lancedb
+  table_name: "tensura_chunks"
+
+retrieval:
+  top_k: 5
+  enable_reranking: false # Phase 1 disabled by default on CPU
+  reranker_model: "BAAI/bge-reranker-v2-m3"
+  enable_bm25_hybrid: false # Phase 1 dense-only, Phase 2 enables hybrid Tantivy BM25
+  query_expansion: true # Expand character aliases like Rimuru -> Slime, Satoru Mikami
+
+llm:
+  default_provider: "openrouter"
+  default_model: "minimax/minimax-m3:free"
+  temperature: 0.1
+  max_output_tokens: 1024
+
+  system_prompt: |
+    You are an accurate, encyclopedic assistant for the "That Time I Got Reincarnated as a Slime" (Tensura) universe.
+    You answer questions strictly using the provided context chunks extracted from the Tensura Wiki.
+    
+    CRITICAL GROUNDING RULES:
+    1. Base your answer ONLY on the provided context. Never extrapolate or assume details not present.
+    2. If the context does not contain sufficient facts to answer the question, clearly state:
+       "I do not have sufficient information in the knowledge base to answer this question accurately."
+       (or in Thai: "ไม่มีข้อมูลที่เพียงพอในฐานความรู้ที่จะตอบคำถามนี้ได้อย่างถูกต้อง")
+    3. Include inline citations to canonical page titles or URLs for every factual claim.
+    4. Always reply in the same language as the user's question (e.g., Thai for Thai questions, English for English questions).
+    5. Always append the CC BY-SA 3.0 license attribution at the very end of your response.

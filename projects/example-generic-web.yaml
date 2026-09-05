@@ -1,0 +1,61 @@
+project:
+  name: example-web
+  title: "Generic Web Scraper Knowledge Base"
+  description: "Example project for web crawling and RAG"
+  license: "Custom / Fair Use"
+  attribution_required: true
+
+source:
+  type: web
+  api_url: ""
+  base_url: "https://example.com"
+  sitemap_url: "https://example.com/sitemap.xml"
+  max_depth: 3
+  max_pages: 500
+  allow_domains:
+    - "example.com"
+  include_patterns:
+    - ".*/docs/.*"
+  exclude_patterns:
+    - ".*/tags/.*"
+    - ".*/author/.*"
+  respect_robots_txt: true
+  user_agent: "WikiRAG/0.1.0 (+https://github.com/example/wikirag)"
+  request_delay_seconds: 1.0
+  use_playwright: false # Headless browser disabled by default to save memory
+
+storage:
+  data_dir: "./data/example-web"
+  raw_dir: "./data/example-web/raw"
+  parsed_dir: "./data/example-web/parsed"
+  embeddings_cache_dir: "./data/example-web/embeddings"
+  vectordb_dir: "./data/example-web/vectordb"
+  state_file: "./data/example-web/state.json"
+  failed_pages_path: "./data/example-web/failed_pages.jsonl"
+
+chunking:
+  target_min_tokens: 400
+  target_max_tokens: 800
+  overlap_percentage: 0.15
+  prepend_contextual_header: true
+
+embedding:
+  provider: sentence-transformers
+  model_name: "BAAI/bge-m3"
+  device: "auto"
+  batch_size: 8
+  normalize: true
+
+vectorstore:
+  type: lancedb
+  table_name: "web_chunks"
+
+retrieval:
+  top_k: 5
+  enable_reranking: false
+  enable_bm25_hybrid: false
+
+llm:
+  default_provider: "ollama"
+  default_model: "llama3.1:8b"
+  temperature: 0.2

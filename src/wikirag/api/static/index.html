@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WikiRAG — Tensura Knowledge & RAG</title>
+  
+  <!-- Fonts: Cormorant Garamond (Copernicus/Tiempos substitute), Inter (StyreneB substitute), JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              DEFAULT: '#cc785c',
+              active: '#a9583e',
+              disabled: '#e6dfd8',
+            },
+            ink: '#141413',
+            body: '#3d3d3a',
+            'body-strong': '#252523',
+            muted: '#6c6a64',
+            'muted-soft': '#8e8b82',
+            hairline: '#e6dfd8',
+            'hairline-soft': '#ebe6df',
+            canvas: '#faf9f5',
+            'surface-soft': '#f5f0e8',
+            'surface-card': '#efe9de',
+            'surface-cream-strong': '#e8e0d2',
+            'surface-dark': '#181715',
+            'surface-dark-elevated': '#252320',
+            'surface-dark-soft': '#1f1e1b',
+            'on-primary': '#ffffff',
+            'on-dark': '#faf9f5',
+            'on-dark-soft': '#a09d96',
+            'accent-teal': '#5db8a6',
+            'accent-amber': '#e8a55a',
+            success: '#5db872',
+            warning: '#d4a017',
+            error: '#c64545',
+          },
+          fontFamily: {
+            serif: ['"Cormorant Garamond"', 'Copernicus', 'Tiempos Headline', 'Garamond', 'serif'],
+            sans: ['Inter', 'StyreneB', '-apple-system', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- React 18, Babel & Libraries -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    body {
+      background-color: #faf9f5;
+      color: #3d3d3a;
+      font-family: 'Inter', 'StyreneB', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .dark body {
+      background-color: #181715;
+      color: #faf9f5;
+    }
+    .font-display {
+      font-family: 'Cormorant Garamond', 'Copernicus', 'Tiempos Headline', serif;
+      letter-spacing: -0.025em;
+    }
+    .markdown-body { color: #252523; font-size: 16px; }
+    .dark .markdown-body { color: #faf9f5; }
+    .markdown-body p { margin-bottom: 0.75rem; line-height: 1.7; }
+    .markdown-body ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 0.75rem; }
+    .markdown-body ol { list-style-type: decimal; margin-left: 1.5rem; margin-bottom: 0.75rem; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 { 
+      font-family: 'Cormorant Garamond', serif; 
+      font-weight: 500; 
+      margin-top: 1rem; 
+      margin-bottom: 0.5rem; 
+      color: #141413;
+    }
+    .dark .markdown-body h1, .dark .markdown-body h2, .dark .markdown-body h3 {
+      color: #faf9f5;
+    }
+    .markdown-body strong { color: #141413; font-weight: 600; }
+    .dark .markdown-body strong { color: #ffffff; }
+    .markdown-body a { color: #a9583e; text-decoration: underline; text-underline-offset: 2px; }
+    .dark .markdown-body a { color: #e8a55a; }
+    input::placeholder { color: #6c6a64; opacity: 1; }
+    .dark input::placeholder { color: #b8b4aa; opacity: 1; }
+    .markdown-body code { 
+      font-family: 'JetBrains Mono', monospace; 
+      background: #efe9de; 
+      color: #141413;
+      padding: 0.15rem 0.35rem; 
+      border-radius: 4px; 
+      font-size: 0.875em; 
+    }
+    .dark .markdown-body code {
+      background: #252320;
+      color: #faf9f5;
+    }
+    .markdown-body pre code { 
+      display: block; 
+      padding: 0.75rem; 
+      overflow-x: auto; 
+      background: #181715;
+      color: #faf9f5;
+    }
+    .workspace-grid { grid-template-columns: 256px minmax(0, 1fr) 360px; }
+    @media (max-width: 1100px) { .workspace-grid { grid-template-columns: 224px minmax(0, 1fr); } }
+    @media (max-width: 1023px) { .workspace-grid { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 767px) { .workspace-grid { grid-template-columns: minmax(0, 1fr); } }
+    .soft-focus { box-shadow: 0 1px 3px rgba(20,20,19,0.08); }
+  </style>
+</head>
+<body class="bg-canvas text-body dark:bg-surface-dark dark:text-on-dark transition-colors duration-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Anthropic signature 4-spoke starburst / radial spike icon
+    const AnthropicSpike = ({ className = "w-4 h-4 fill-current" }) => (
+      <svg viewBox="0 0 24 24" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2C12 7.52285 7.52285 12 2 12C7.52285 12 12 16.4771 12 22C12 16.4771 16.4771 12 22 12C16.4771 12 12 7.52285 12 2Z" fill="currentColor"/>
+      </svg>
+    );
+
+    const I18N = {
+      en: {
+        title: "WikiRAG",
+        subtitle: "Tensura Knowledge Base",
+        chat: "Chat & Ask",
+        entities: "Entity Browser",
+        graph: "Knowledge Graph",
+        admin: "Admin & Sync",
+        settings: "Settings",
+        placeholder: "Ask about Rimuru, skills, Tempest, or lore (Thai or English)...",
+        send: "Send",
+        sources: "Sources & Provenance",
+        score: "Score",
+        noEntities: "No entities loaded yet. Run sync to index pages.",
+        syncNow: "Trigger Incremental Sync",
+        syncFull: "Full Crawl & Sync",
+        syncStatus: "Ingestion Status",
+        totalArticles: "Wiki Articles",
+        totalChunks: "Indexed Chunks",
+        llmProvider: "LLM Provider",
+        modelName: "Model Name",
+        apiKey: "API Key (OpenRouter / OpenAI / Gemini)",
+        embeddingEngine: "Embedding Engine",
+        quantization: "Model Quantization",
+        topK: "Top-K Chunks",
+        enableRerank: "Enable Cross-Encoder Reranker",
+        enableBM25: "Enable BM25 Hybrid Search",
+        temperature: "Temperature",
+        save: "Save Settings",
+        licenseNotice: "Content derived from Tensura Fandom Wiki under CC BY-SA 3.0 license.",
+        searchEntity: "Search entities...",
+        viewDetail: "View Infobox",
+        embedOnly: "Embed & Index Chunks",
+        crawledPages: "Crawled Pages",
+        parsedEntities: "Entities Extracted",
+        cachedEmbeddings: "Cached Vectors (Disk)",
+        relationships: "Knowledge Relations",
+        stageTitle: "Current Pipeline Stage",
+        pipelineStages: "Pipeline Stages",
+      },
+      th: {
+        title: "WikiRAG",
+        subtitle: "ฐานความรู้ Tensura & ระบบ RAG อัจฉริยะ",
+        chat: "ถาม-ตอบ (Chat)",
+        entities: "สำรวจตัวละคร (Entities)",
+        graph: "โครงข่ายความสัมพันธ์ (Graph)",
+        admin: "ผู้ดูแลระบบ (Sync)",
+        settings: "ตั้งค่าระบบ",
+        placeholder: "ถามคำถามเกี่ยวกับริมุรุ สกิล หรือเนื้อเรื่อง (ภาษาไทยหรืออังกฤษก็ได้)...",
+        send: "ส่งคำถาม",
+        sources: "แหล่งที่มาและคะแนนอ้างอิง",
+        score: "คะแนน",
+        noEntities: "ยังไม่มีข้อมูลตัวละคร กรุณากด Sync เพื่อดึงข้อมูล",
+        syncNow: "เริ่ม Sync อัปเดตข้อมูล (Incremental)",
+        syncFull: "ดึงข้อมูลใหม่ทั้งหมด (Full)",
+        embedOnly: "เริ่มแปลงเวกเตอร์ (Embed & Index)",
+        crawledPages: "หน้าที่ดึงแล้ว (Crawled)",
+        parsedEntities: "ตัวละคร/หน้าที่แยกแล้ว",
+        cachedEmbeddings: "เวกเตอร์ในแคช (Disk)",
+        relationships: "ความสัมพันธ์ในกราฟ",
+        stageTitle: "ขั้นตอนการทำงานปัจจุบัน",
+        pipelineStages: "ขั้นตอนการประมวลผล",
+        syncStatus: "สถานะการดึงข้อมูล",
+        totalArticles: "บทความทั้งหมด",
+        totalChunks: "เวกเตอร์ในระบบ (LanceDB)",
+        llmProvider: "ผู้ให้บริการ LLM",
+        modelName: "ชื่อโมเดล",
+        apiKey: "API Key (OpenRouter / OpenAI / Gemini)",
+        embeddingEngine: "ระบบประมวลผล Embedding",
+        quantization: "การบีบอัดโมเดล (Quantization)",
+        topK: "จำนวน Chunks ที่ค้นหา (Top-K)",
+        enableRerank: "เปิดใช้งาน Reranker จัดอันดับซ้ำ",
+        enableBM25: "เปิดใช้งาน BM25 ค้นหาแบบไฮบริด",
+        temperature: "ความสร้างสรรค์ (Temperature)",
+        save: "บันทึกการตั้งค่า",
+        licenseNotice: "ข้อมูลดึงมาจาก Tensura Fandom Wiki ภายใต้สัญญาอนุญาต CC BY-SA 3.0",
+        searchEntity: "ค้นหาตัวละคร / หน้า...",
+        viewDetail: "ดูข้อมูล Infobox",
+      }
+    };
+
+    function App() {
+      const [lang, setLang] = useState('th');
+      const [darkMode, setDarkMode] = useState(false);
+      const [tab, setTab] = useState('chat'); // 'chat' | 'entities' | 'graph' | 'admin'
+      const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+      // Settings state (with localStorage persistence)
+      const [settings, setSettings] = useState(() => {
+        const saved = localStorage.getItem('wikirag_settings');
+        if (saved) {
+          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: false,
+            embeddingModel: parsed.embeddingModel || 'BAAI/bge-m3', embeddingDevice: parsed.embeddingDevice || 'cpu', embeddingBatchSize: parsed.embeddingBatchSize || 8,
+            rerankerModel: parsed.rerankerModel || 'BAAI/bge-reranker-v2-m3', chunkMinTokens: parsed.chunkMinTokens || 400, chunkMaxTokens: parsed.chunkMaxTokens || 800,
+            chunkOverlap: parsed.chunkOverlap ?? 15, crawlerBatchSize: parsed.crawlerBatchSize || 50, crawlerDelay: parsed.crawlerDelay ?? 0.5,
+            crawlerCheckpoint: parsed.crawlerCheckpoint || 100, storageDataDir: parsed.storageDataDir || './data/tensura',
+            storageVectorDir: parsed.storageVectorDir || './data/tensura/vectordb', storageRawDir: parsed.storageRawDir || './data/tensura/raw'}; } catch (e) {}
+        }
+        return {
+          provider: 'openrouter',
+          model: 'minimax/minimax-m3:free',
+           apiKey: '',
+           baseUrl: '',
+          embeddingBackend: 'onnx',
+          quantization: 'int8',
+          topK: 5,
+          enableReranking: false,
+          enableBM25: false,
+           temperature: 0.1,
+           maxTokens: 1024,
+          systemPrompt: '',
+          embeddingModel: 'BAAI/bge-m3',
+          embeddingDevice: 'cpu',
+          embeddingBatchSize: 8,
+          rerankerModel: 'BAAI/bge-reranker-v2-m3',
+          chunkMinTokens: 400,
+          chunkMaxTokens: 800,
+          chunkOverlap: 15,
+          crawlerBatchSize: 50,
+          crawlerDelay: 0.5,
+          crawlerCheckpoint: 100,
+          storageDataDir: './data/tensura',
+          storageVectorDir: './data/tensura/vectordb',
+          storageRawDir: './data/tensura/raw',
+        };
+      });
+
+      const [conversations, setConversations] = useState([]);
+      const [conversationId, setConversationId] = useState(null);
+      const [historyLoading, setHistoryLoading] = useState(false);
+
+      const fetchConversations = async () => {
+        try {
+          const res = await fetch('/api/conversations?project=tensura');
+          if (res.ok) setConversations(await res.json());
+        } catch (e) { console.error('Failed to load chat history', e); }
+      };
+
+      const createNewChat = async () => {
+        try {
+          const res = await fetch('/api/conversations', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({project: 'tensura', title: lang === 'th' ? 'แชทใหม่' : 'New chat', llm_provider: settings.provider, llm_model: settings.model})
+          });
+          if (!res.ok) throw new Error('Failed to create conversation');
+          const data = await res.json();
+          setConversationId(data.id);
+          setMessages([]); setActiveSources([]);
+          fetchConversations();
+        } catch (e) { console.error(e); }
+      };
+
+      const openConversation = async (id) => {
+        setHistoryLoading(true);
+        try {
+          const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+          if (!res.ok) throw new Error('Failed to load conversation');
+          const data = await res.json();
+          setConversationId(data.id);
+          setMessages((data.messages || []).map(m => ({role: m.role, content: m.content, sources: m.citations || []})));
+          setActiveSources([]);
+          setTab('chat');
+        } catch (e) { console.error(e); }
+        finally { setHistoryLoading(false); }
+      };
+
+      const deleteConversation = async (id) => {
+        if (!confirm(lang === 'th' ? 'ลบประวัติแชทนี้หรือไม่?' : 'Delete this chat?')) return;
+        await fetch(`/api/conversations/${encodeURIComponent(id)}`, {method: 'DELETE'});
+        if (conversationId === id) createNewChat();
+        fetchConversations();
+      };
+
+      const handleSaveSettings = async () => {
+        const numericSettings = {
+          embeddingBatchSize: Number(settings.embeddingBatchSize),
+          chunkMinTokens: Number(settings.chunkMinTokens),
+          chunkMaxTokens: Number(settings.chunkMaxTokens),
+          chunkOverlap: Number(settings.chunkOverlap),
+          crawlerBatchSize: Number(settings.crawlerBatchSize),
+          crawlerDelay: Number(settings.crawlerDelay),
+          crawlerCheckpoint: Number(settings.crawlerCheckpoint),
+        };
+        if (numericSettings.embeddingBatchSize < 1 || numericSettings.embeddingBatchSize > 64 ||
+            numericSettings.chunkMinTokens < 100 || numericSettings.chunkMaxTokens < numericSettings.chunkMinTokens ||
+            numericSettings.chunkOverlap < 0 || numericSettings.chunkOverlap > 50 ||
+            numericSettings.crawlerBatchSize < 1 || numericSettings.crawlerDelay < 0 || numericSettings.crawlerCheckpoint < 1) {
+          alert(lang === 'th' ? 'กรุณาตรวจสอบค่าขั้นสูง: ตัวเลขอยู่นอกช่วงหรือ Chunk ต่ำ/สลับช่วง' : 'Please check advanced settings: invalid numeric range or chunk size.');
+          return;
+        }
+        const embeddingChanged = settings.embeddingModel !== (settings._savedEmbeddingModel || 'BAAI/bge-m3') || settings.embeddingDevice !== (settings._savedEmbeddingDevice || 'cpu');
+        const storageChanged = settings.storageDataDir !== './data/tensura' || settings.storageVectorDir !== './data/tensura/vectordb';
+        if ((embeddingChanged || storageChanged) && !confirm(lang === 'th'
+          ? 'การเปลี่ยน Embedding Model/Device หรือ Storage อาจทำให้ต้อง Restart และสร้างดัชนีใหม่ ต้องการบันทึกต่อหรือไม่?'
+          : 'Changing Embedding Model/Device or Storage may require a restart and re-index. Save anyway?')) return;
+        const nextSettings = {...settings, ...numericSettings, _savedEmbeddingModel: settings.embeddingModel, _savedEmbeddingDevice: settings.embeddingDevice};
+        localStorage.setItem('wikirag_settings', JSON.stringify(nextSettings));
+        try {
+          await fetch('/api/settings?project=tensura', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(nextSettings)});
+        } catch (e) { console.error('Failed to persist settings', e); }
+        try {
+          await fetch('/api/settings/embedding', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              backend: settings.embeddingBackend,
+              quantization: settings.quantization,
+              model_name: settings.embeddingModel,
+              device: settings.embeddingDevice,
+              batch_size: numericSettings.embeddingBatchSize,
+            })
+          });
+        } catch (e) {
+          console.error("Failed to update embedding settings", e);
+        }
+        setIsSettingsOpen(false);
+      };
+
+      const resetAdvancedSettings = () => {
+        if (!confirm(lang === 'th' ? 'คืนค่าการตั้งค่าขั้นสูงเป็นค่าเริ่มต้นหรือไม่?' : 'Reset advanced settings to defaults?')) return;
+        setSettings({...settings, embeddingModel: 'BAAI/bge-m3', embeddingDevice: 'cpu', embeddingBatchSize: 8,
+          rerankerModel: 'BAAI/bge-reranker-v2-m3', chunkMinTokens: 400, chunkMaxTokens: 800, chunkOverlap: 15,
+          crawlerBatchSize: 50, crawlerDelay: 0.5, crawlerCheckpoint: 100,
+          storageDataDir: './data/tensura', storageVectorDir: './data/tensura/vectordb', storageRawDir: './data/tensura/raw'});
+      };
+
+
+      // Chat state
+      const [messages, setMessages] = useState([
+        {
+          role: 'assistant',
+          content: lang === 'th' 
+            ? "ยินดีต้อนรับสู่ **WikiRAG** ฐานความรู้วรรณกรรมและข้อมูลเชิงลึกของ *That Time I Got Reincarnated as a Slime* (Tensura)\n\nคุณสามารถสอบถามประวัติศาสตร์ตัวละคร พลังสกิล ความสัมพันธ์ หรือเหตุการณ์สำคัญในเรื่องเป็นภาษาไทยหรืออังกฤษได้เลยครับ"
+            : "Welcome to **WikiRAG** — the editorial knowledge partner for *That Time I Got Reincarnated as a Slime* (Tensura).\n\nFeel free to explore characters, skill evolutions, alliances, or lore in Thai or English.",
+          sources: []
+        }
+      ]);
+      const [inputQuery, setInputQuery] = useState('');
+      const [isStreaming, setIsStreaming] = useState(false);
+      const [activeSources, setActiveSources] = useState([]);
+      const [editingIndex, setEditingIndex] = useState(null);
+      const abortControllerRef = useRef(null);
+      const messagesEndRef = useRef(null);
+
+      // Entity Explorer state
+      const [entities, setEntities] = useState([]);
+      const [searchEntityText, setSearchEntityText] = useState('');
+      const [selectedEntity, setSelectedEntity] = useState(null);
+      const [loadingEntities, setLoadingEntities] = useState(false);
+
+      // Admin stats
+      const [adminStats, setAdminStats] = useState({
+        is_syncing: false,
+        status_message: "Idle",
+        total_articles: 3403,
+        total_chunks: 0,
+      });
+
+      // Knowledge Graph state & Canvas
+      const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
+      const [graphLoading, setGraphLoading] = useState(false);
+      const canvasRef = useRef(null);
+
+      const t = I18N[lang];
+
+      useEffect(() => {
+        if (darkMode) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }, [darkMode]);
+
+      useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [messages]);
+
+      useEffect(() => {
+        fetchAdminStatus();
+        fetchEntities();
+        fetchConversations();
+        fetch('/api/settings?project=tensura').then(r => r.ok ? r.json() : {}).then(saved => {
+          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: false}));
+        }).catch(() => {});
+      }, []);
+
+      useEffect(() => {
+        let interval;
+        if (adminStats.is_syncing) {
+          interval = setInterval(() => {
+            fetchAdminStatus();
+          }, 1500);
+        }
+        return () => {
+          if (interval) clearInterval(interval);
+        };
+      }, [adminStats.is_syncing]);
+
+      // Keep knowledge views fresh after background sync/embed jobs complete.
+      useEffect(() => {
+        if (tab !== 'entities' && tab !== 'graph') return;
+        const refresh = () => tab === 'entities' ? fetchEntities(undefined, true) : fetchGraphData(true);
+        const interval = setInterval(refresh, 15000);
+        return () => clearInterval(interval);
+      }, [tab]);
+
+
+      const fetchAdminStatus = async () => {
+        try {
+          const res = await fetch('/api/admin/status');
+          if (res.ok) {
+            const data = await res.json();
+            setAdminStats(data);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      const fetchEntities = async (category, silent = false) => {
+        if (!silent) setLoadingEntities(true);
+        try {
+          const query = category ? `&category=${encodeURIComponent(category)}` : '';
+          const url = `/api/entities?limit=500${query}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            setEntities(data);
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoadingEntities(false);
+        }
+      };
+
+      const fetchEntityDetail = async (name) => {
+        try {
+          const res = await fetch(`/api/entities/${encodeURIComponent(name)}`);
+          if (res.ok) {
+            const data = await res.json();
+            setSelectedEntity(data);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      const fetchGraphData = async (silent = false) => {
+        if (!silent) setGraphLoading(true);
+        try {
+          const res = await fetch('/api/graph?limit=120');
+          if (res.ok) {
+            const data = await res.json();
+            setGraphData(data);
+          }
+        } catch (e) {
+          console.error("Failed to fetch graph data", e);
+        } finally {
+          setGraphLoading(false);
+        }
+      };
+
+      // Lightweight force simulation for graph
+      useEffect(() => {
+        if (tab !== 'graph' || !canvasRef.current || graphData.nodes.length === 0) return;
+
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        let width = (canvas.width = canvas.parentElement.clientWidth);
+        let height = (canvas.height = canvas.parentElement.clientHeight);
+
+        const nodes = graphData.nodes.map((n, i) => ({
+          ...n,
+          x: width / 2 + (Math.random() - 0.5) * (width * 0.7),
+          y: height / 2 + (Math.random() - 0.5) * (height * 0.7),
+          vx: 0,
+          vy: 0,
+          radius: n.entity_type === 'character' ? 14 : 10,
+          color: n.entity_type === 'character' ? '#cc785c' : n.entity_type === 'location' ? '#e8a55a' : '#5db8a6'
+        }));
+
+        const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        const edges = graphData.edges
+          .map(e => ({ ...e, sourceNode: nodeMap.get(e.source), targetNode: nodeMap.get(e.target) }))
+          .filter(e => e.sourceNode && e.targetNode);
+
+        let animationId;
+        const render = () => {
+          for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+              let dx = nodes[j].x - nodes[i].x;
+              let dy = nodes[j].y - nodes[i].y;
+              let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+              if (dist < 120) {
+                let force = (120 - dist) / 120 * 0.5;
+                nodes[i].vx -= (dx / dist) * force;
+                nodes[i].vy -= (dy / dist) * force;
+                nodes[j].vx += (dx / dist) * force;
+                nodes[j].vy += (dy / dist) * force;
+              }
+            }
+          }
+
+          for (const e of edges) {
+            let dx = e.targetNode.x - e.sourceNode.x;
+            let dy = e.targetNode.y - e.sourceNode.y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            let force = (dist - 80) * 0.01;
+            e.sourceNode.vx += (dx / dist) * force;
+            e.sourceNode.vy += (dy / dist) * force;
+            e.targetNode.vx -= (dx / dist) * force;
+            e.targetNode.vy -= (dy / dist) * force;
+          }
+
+          for (const n of nodes) {
+            n.x += n.vx;
+            n.y += n.vy;
+            n.vx *= 0.85;
+            n.vy *= 0.85;
+            n.x = Math.max(n.radius, Math.min(width - n.radius, n.x));
+            n.y = Math.max(n.radius, Math.min(height - n.radius, n.y));
+          }
+
+          ctx.clearRect(0, 0, width, height);
+
+          ctx.lineWidth = 1;
+          for (const e of edges) {
+            ctx.strokeStyle = darkMode ? 'rgba(230,223,216,0.15)' : 'rgba(20,20,19,0.12)';
+            ctx.beginPath();
+            ctx.moveTo(e.sourceNode.x, e.sourceNode.y);
+            ctx.lineTo(e.targetNode.x, e.targetNode.y);
+            ctx.stroke();
+
+            let midX = (e.sourceNode.x + e.targetNode.x) / 2;
+            let midY = (e.sourceNode.y + e.targetNode.y) / 2;
+            ctx.fillStyle = darkMode ? '#a09d96' : '#6c6a64';
+            ctx.font = '10px Inter, sans-serif';
+            ctx.fillText(e.relation_type, midX, midY);
+          }
+
+          for (const n of nodes) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius, 0, 2 * Math.PI);
+            ctx.fillStyle = n.color;
+            ctx.fill();
+            ctx.strokeStyle = darkMode ? '#181715' : '#faf9f5';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = darkMode ? '#faf9f5' : '#141413';
+            ctx.font = '500 11px Inter, sans-serif';
+            ctx.fillText(n.name, n.x + n.radius + 5, n.y + 4);
+          }
+
+          animationId = requestAnimationFrame(render);
+        };
+
+        render();
+        return () => cancelAnimationFrame(animationId);
+      }, [tab, graphData, darkMode]);
+
+      // Handle Streaming Chat via SSE
+      const handleSendMessage = async (e, overrideQuery = null) => {
+        e?.preventDefault();
+        const candidateQuery = overrideQuery !== null ? overrideQuery : inputQuery;
+        if (!candidateQuery.trim() || isStreaming) return;
+
+        const userMsg = candidateQuery.trim();
+        setInputQuery('');
+        if (editingIndex !== null) {
+          setMessages(prev => [...prev.slice(0, editingIndex), { role: 'user', content: userMsg }]);
+          setEditingIndex(null);
+        } else {
+          setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+        }
+        setIsStreaming(true);
+        setActiveSources([]);
+
+        setMessages(prev => [...prev, { role: 'assistant', content: '', sources: [] }]);
+
+        try {
+          abortControllerRef.current = new AbortController();
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: abortControllerRef.current.signal,
+              body: JSON.stringify({
+                message: userMsg,
+                conversation_id: conversationId,
+              project: 'tensura',
+              llm_provider: settings.provider,
+               llm_model: settings.model,
+               api_key: settings.apiKey || undefined,
+               base_url: settings.baseUrl || undefined,
+               max_output_tokens: parseInt(settings.maxTokens) || 1024,
+               system_prompt: settings.systemPrompt || undefined,
+              top_k: parseInt(settings.topK),
+              enable_reranking: settings.enableReranking,
+              enable_bm25: settings.enableBM25,
+              reranker_model: settings.rerankerModel || undefined,
+              temperature: parseFloat(settings.temperature),
+            })
+
+          });
+
+          if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+          let currentSources = [];
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const block of lines) {
+              if (!block.trim()) continue;
+              const matchEvent = block.match(/event:\s*(\w+)/);
+              const matchData = block.match(/data:\s*(.+)/s);
+
+              const eventType = matchEvent ? matchEvent[1] : 'message';
+              const eventData = matchData ? matchData[1] : '';
+
+              if (eventType === 'sources') {
+                try {
+                  currentSources = JSON.parse(eventData);
+                  setActiveSources(currentSources);
+                  setMessages(prev => {
+                    const next = [...prev];
+                    next[next.length - 1].sources = currentSources;
+                    return next;
+                  });
+                } catch (err) {
+                  console.error("Failed to parse sources", err);
+                  }
+              } else if (eventType === 'conversation') {
+                try { setConversationId(JSON.parse(eventData).id); fetchConversations(); } catch (err) { console.error(err); }
+              } else if (eventType === 'token') {
+                try {
+                  const tokenObj = JSON.parse(eventData);
+                  setMessages(prev => {
+                    const next = [...prev];
+                    next[next.length - 1].content += tokenObj.token;
+                    return next;
+                  });
+                } catch (err) {
+                  console.error("Token parse error", err);
+                }
+              } else if (eventType === 'error') {
+                try {
+                  const errObj = JSON.parse(eventData);
+                  setMessages(prev => {
+                    const next = [...prev];
+                    next[next.length - 1].content += `\n\n*(Error: ${errObj.error})*`;
+                    return next;
+                  });
+                } catch (e) {}
+              }
+            }
+          }
+        } catch (error) {
+          if (error.name === 'AbortError') {
+            setMessages(prev => {
+              const next = [...prev];
+              if (next.length && next[next.length - 1].role === 'assistant') next[next.length - 1].content += '\n\n*(หยุดการตอบแล้ว)*';
+              return next;
+            });
+            return;
+          }
+          setMessages(prev => {
+            const next = [...prev];
+            next[next.length - 1].content = `Connection Error: ${error.message}`;
+            return next;
+          });
+        } finally {
+          abortControllerRef.current = null;
+          setIsStreaming(false);
+          fetchConversations();
+          fetchAdminStatus();
+        }
+      };
+
+      const cancelGeneration = () => abortControllerRef.current?.abort();
+
+      const editMessage = (idx) => {
+        if (isStreaming) return;
+        // Editing creates a new branch so the old server-side history remains intact.
+        setConversationId(null);
+        setInputQuery(messages[idx].content);
+        setEditingIndex(idx);
+      };
+
+      const copyMessage = async (content) => {
+        try { await navigator.clipboard.writeText(content); } catch (e) { console.error('Copy failed', e); }
+      };
+
+      const regenerateMessage = (idx) => {
+        if (isStreaming || idx < 1 || messages[idx - 1]?.role !== 'user') return;
+        const question = messages[idx - 1].content;
+        setConversationId(null);
+        setMessages(prev => prev.slice(0, idx));
+        setTimeout(() => handleSendMessage(null, question), 0);
+      };
+
+      const triggerSync = async (incremental = true) => {
+        try {
+          const res = await fetch(`/api/admin/sync?incremental=${incremental}`, { method: 'POST' });
+          if (res.ok) {
+            fetchAdminStatus();
+            alert(lang === 'th' ? "เริ่มการ Sync ในเบื้องหลังแล้ว" : "Sync initiated in background!");
+          }
+        } catch (e) {
+          alert(`Sync error: ${e.message}`);
+        }
+      };
+
+      const triggerEmbed = async () => {
+        try {
+          const res = await fetch('/api/admin/embed', { method: 'POST' });
+          if (res.ok) {
+            fetchAdminStatus();
+            alert(lang === 'th' ? "เริ่มการแปลงเวกเตอร์ในเบื้องหลังแล้ว!" : "Embedding job started in background!");
+          }
+        } catch (e) {
+          alert(`Embed error: ${e.message}`);
+        }
+      };
+
+
+      return (
+        <div className="flex flex-col h-screen overflow-hidden bg-canvas text-body dark:bg-surface-dark dark:text-on-dark font-sans selection:bg-surface-cream-strong">
+          
+          {/* Top Navigation: 64px, Canvas background, Hairline bottom */}
+          <header className="h-16 flex items-center justify-between px-6 border-b border-hairline dark:border-surface-dark-elevated bg-canvas dark:bg-surface-dark z-20">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 rounded-md bg-surface-card dark:bg-surface-dark-elevated text-primary flex items-center justify-center border border-hairline dark:border-surface-dark-soft">
+                <AnthropicSpike className="w-5 h-5 text-primary" />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <h1 className="font-display text-2xl font-normal text-ink dark:text-on-dark tracking-tight">
+                  {t.title}
+                </h1>
+                   <span className="text-[11px] font-mono uppercase tracking-widest text-muted font-medium">
+                   Tensura Knowledge System
+                </span>
+              </div>
+            </div>
+
+            {/* Category / Nav Tabs */}
+            <nav className="flex items-center gap-1 bg-surface-soft dark:bg-surface-dark-soft p-1 rounded-md border border-hairline-soft dark:border-surface-dark-elevated">
+              <button 
+                onClick={() => setTab('chat')}
+                className={`px-3 py-1.5 rounded text-[13px] font-medium transition ${tab === 'chat' ? 'bg-canvas dark:bg-surface-dark text-ink dark:text-on-dark shadow-xs' : 'text-muted hover:text-ink dark:text-muted-soft dark:hover:text-on-dark'}`}
+              >
+                <i className="fa-solid fa-comments mr-1.5 text-xs opacity-70"></i>{t.chat}
+              </button>
+              <button 
+                onClick={() => setTab('entities')}
+                className={`px-3 py-1.5 rounded text-[13px] font-medium transition ${tab === 'entities' ? 'bg-canvas dark:bg-surface-dark text-ink dark:text-on-dark shadow-xs' : 'text-muted hover:text-ink dark:text-muted-soft dark:hover:text-on-dark'}`}
+              >
+                <i className="fa-solid fa-book-atlas mr-1.5 text-xs opacity-70"></i>{t.entities}
+              </button>
+              <button 
+                onClick={() => { setTab('graph'); fetchGraphData(); }}
+                className={`px-3 py-1.5 rounded text-[13px] font-medium transition ${tab === 'graph' ? 'bg-canvas dark:bg-surface-dark text-ink dark:text-on-dark shadow-xs' : 'text-muted hover:text-ink dark:text-muted-soft dark:hover:text-on-dark'}`}
+              >
+                <i className="fa-solid fa-circle-nodes mr-1.5 text-xs opacity-70"></i>{t.graph}
+              </button>
+              <button 
+                onClick={() => setTab('admin')}
+                className={`px-3 py-1.5 rounded text-[13px] font-medium transition ${tab === 'admin' ? 'bg-canvas dark:bg-surface-dark text-ink dark:text-on-dark shadow-xs' : 'text-muted hover:text-ink dark:text-muted-soft dark:hover:text-on-dark'}`}
+              >
+                <i className="fa-solid fa-database mr-1.5 text-xs opacity-70"></i>{t.admin}
+              </button>
+            </nav>
+
+            {/* Right Controls */}
+            <div className="flex items-center space-x-2">
+              <button 
+                onClick={() => setLang(l => l === 'th' ? 'en' : 'th')}
+                className="px-3 py-1.5 rounded-md border border-hairline dark:border-surface-dark-elevated text-xs font-medium text-body dark:text-on-dark hover:bg-surface-soft dark:hover:bg-surface-dark-elevated transition"
+              >
+                {lang === 'th' ? '🇹🇭 ภาษาไทย' : '🇺🇸 English'}
+              </button>
+
+              <button 
+                onClick={() => setDarkMode(!darkMode)}
+                className="w-9 h-9 flex items-center justify-center rounded-md border border-hairline dark:border-surface-dark-elevated text-muted dark:text-on-dark-soft hover:bg-surface-soft dark:hover:bg-surface-dark-elevated transition text-sm"
+              >
+                <i className={`fa-solid ${darkMode ? 'fa-sun text-accent-amber' : 'fa-moon'}`}></i>
+              </button>
+
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="px-3 py-1.5 rounded-md border border-hairline dark:border-surface-dark-elevated bg-surface-soft dark:bg-surface-dark-elevated text-ink dark:text-on-dark text-xs font-medium hover:border-primary transition flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-sliders text-primary"></i>
+                <span>{t.settings}</span>
+              </button>
+            </div>
+          </header>
+
+          {/* Main Body Stage */}
+          <main className="flex-1 min-h-0 overflow-hidden relative">
+            
+            {/* TAB 1: CHAT */}
+            {tab === 'chat' && (
+               <div className="grid h-full workspace-grid">
+                {/* Persistent conversation history */}
+                <aside className="hidden md:flex w-64 flex-col border-r border-hairline dark:border-surface-dark-elevated bg-surface-soft dark:bg-surface-dark-soft p-3">
+                  <button onClick={createNewChat} className="w-full mb-3 flex items-center justify-center gap-2 bg-primary text-on-primary rounded-md py-2 text-sm font-medium hover:bg-primary-active transition">
+                    <i className="fa-solid fa-plus"></i>{lang === 'th' ? 'แชทใหม่' : 'New chat'}
+                  </button>
+                  <div className="flex-1 overflow-y-auto space-y-1">
+                    {historyLoading && <div className="text-xs text-muted p-2">Loading...</div>}
+                    {conversations.map(c => (
+                      <div key={c.id} className={`group flex items-center gap-1 rounded-md ${conversationId === c.id ? 'bg-canvas dark:bg-surface-dark' : 'hover:bg-canvas/70 dark:hover:bg-surface-dark/70'}`}>
+                        <button onClick={() => openConversation(c.id)} className="flex-1 min-w-0 text-left px-3 py-2.5">
+                          <div className="truncate text-[13px] font-medium text-ink dark:text-on-dark">{c.title}</div>
+                          <div className="text-[10px] text-muted dark:text-on-dark-soft mt-0.5">{c.message_count || 0} messages</div>
+                        </button>
+                        <button onClick={() => deleteConversation(c.id)} className="opacity-0 group-hover:opacity-100 px-2 text-muted hover:text-red-500 transition" title="Delete">
+                          <i className="fa-solid fa-trash text-[11px]"></i>
+                        </button>
+                      </div>
+                    ))}
+                    {!conversations.length && !historyLoading && <div className="text-xs text-muted dark:text-on-dark-soft p-2">{lang === 'th' ? 'ยังไม่มีประวัติแชท' : 'No chat history yet'}</div>}
+                  </div>
+                </aside>
+                {/* Chat Column */}
+                <div className="flex-1 flex flex-col h-full min-h-0 bg-canvas dark:bg-surface-dark min-w-0">
+                  <div className="h-14 px-5 md:px-8 border-b border-hairline dark:border-surface-dark-elevated flex items-center justify-between bg-canvas dark:bg-surface-dark">
+                    <div>
+                      <div className="font-display text-xl text-ink dark:text-on-dark">{t.chat}</div>
+                      <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-on-dark-soft mt-0.5">Grounded answers · Thai / English</div>
+                    </div>
+                    <div className="hidden sm:flex items-center gap-2 text-[11px] text-muted dark:text-on-dark-soft">
+                      <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
+                      <span>{settings.provider} / {settings.model}</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full">
+                    {messages.map((m, idx) => (
+                      <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-2xl rounded-lg p-5 transition ${
+                          m.role === 'user'
+                            ? 'bg-primary text-on-primary shadow-sm rounded-br-none'
+                            : 'bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated text-body-strong dark:text-on-dark rounded-bl-none'
+                        }`}>
+                          <div className="flex items-center space-x-2 mb-2 opacity-80 text-xs font-mono uppercase tracking-wider">
+                            {m.role === 'user' ? (
+                              <>
+                                <i className="fa-solid fa-user text-[11px]"></i>
+                                <span>You</span>
+                              </>
+                            ) : (
+                              <>
+                                <AnthropicSpike className="w-3.5 h-3.5 text-primary" />
+                                 <span className="font-semibold text-primary">WikiRAG / Knowledge Base</span>
+                              </>
+                            )}
+                          </div>
+                          
+                          <div 
+                            className="markdown-body text-[15px] leading-relaxed"
+                            dangerouslySetInnerHTML={{ __html: marked.parse(m.content || '...') }}
+                          />
+
+                           {m.sources && m.sources.length > 0 && (
+                            <div className="mt-4 pt-3 border-t border-hairline dark:border-surface-dark-elevated flex flex-wrap gap-1.5">
+                              {m.sources.map((s, si) => (
+                                <a 
+                                  key={si}
+                                  href={s.url || '#'} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center text-xs font-mono bg-canvas dark:bg-surface-dark text-primary hover:text-primary-active border border-hairline dark:border-surface-dark-elevated px-2 py-1 rounded transition"
+                                >
+                                  [{s.index}] {s.entity} ({s.section})
+                                </a>
+                              ))}
+                            </div>
+                           )}
+                           <div className={`mt-3 pt-2 border-t border-hairline/60 dark:border-surface-dark-elevated/70 flex items-center gap-3 text-[11px] ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                             {m.role === 'user' ? (
+                               <button onClick={() => editMessage(idx)} disabled={isStreaming} className="text-white/80 hover:text-white disabled:opacity-40 transition flex items-center gap-1">
+                                 <i className="fa-solid fa-pen"></i><span>{lang === 'th' ? 'แก้ไขข้อความ' : 'Edit'}</span>
+                               </button>
+                             ) : (
+                               <>
+                                 {m.content && <button onClick={() => copyMessage(m.content)} className="text-muted dark:text-on-dark-soft hover:text-primary transition flex items-center gap-1"><i className="fa-regular fa-copy"></i><span>{lang === 'th' ? 'คัดลอก' : 'Copy'}</span></button>}
+                                 {idx > 0 && !isStreaming && <button onClick={() => regenerateMessage(idx)} className="text-muted dark:text-on-dark-soft hover:text-primary transition flex items-center gap-1"><i className="fa-solid fa-rotate-right"></i><span>{lang === 'th' ? 'สร้างคำตอบใหม่' : 'Regenerate'}</span></button>}
+                               </>
+                             )}
+                           </div>
+                         </div>
+                      </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </div>
+
+                  {/* Input Form: Text-input (40px, rounded.md, hairline border, focus coral) */}
+                   <div className="p-4 md:p-6 border-t border-hairline dark:border-surface-dark-elevated bg-canvas dark:bg-surface-dark">
+                     {editingIndex !== null && (
+                       <div className="max-w-3xl mx-auto mb-2 flex items-center justify-between text-xs text-primary bg-primary/5 border border-primary/20 rounded-md px-3 py-2">
+                         <span><i className="fa-solid fa-pen mr-2"></i>{lang === 'th' ? 'กำลังแก้ไขข้อความเดิม' : 'Editing previous message'}</span>
+                         <button onClick={() => {setEditingIndex(null); setInputQuery('');}} className="text-muted hover:text-primary">ยกเลิก</button>
+                       </div>
+                     )}
+                     <form onSubmit={handleSendMessage} className="max-w-3xl mx-auto flex items-center space-x-2">
+                      <input 
+                        type="text"
+                        value={inputQuery}
+                        onChange={(e) => setInputQuery(e.target.value)}
+                        placeholder={t.placeholder}
+                        disabled={isStreaming}
+                        className="flex-1 bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-4 py-2.5 text-[15px] text-ink dark:text-on-dark focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition shadow-inner"
+                      />
+                      {isStreaming ? (
+                        <button type="button" onClick={cancelGeneration} className="bg-surface-dark hover:bg-black text-on-dark font-medium px-5 h-10 rounded-md text-sm transition shadow-xs flex items-center space-x-2">
+                          <i className="fa-solid fa-stop text-xs"></i><span>{lang === 'th' ? 'ยกเลิก' : 'Stop'}</span>
+                        </button>
+                      ) : (
+                        <button type="submit" disabled={!inputQuery.trim()} className="bg-primary hover:bg-primary-active disabled:bg-primary-disabled disabled:text-muted text-on-primary font-medium px-5 h-10 rounded-md text-sm transition shadow-xs flex items-center space-x-2">
+                          <span>{editingIndex !== null ? (lang === 'th' ? 'ส่งใหม่' : 'Send edit') : t.send}</span><i className="fa-solid fa-arrow-right text-xs"></i>
+                        </button>
+                      )}
+                    </form>
+                  </div>
+                </div>
+
+                {/* Sources Transparency Panel (Dark Navy Product Surface) */}
+                <div className="hidden lg:flex w-auto border-l border-hairline dark:border-surface-dark-elevated bg-surface-soft dark:bg-surface-dark-soft flex-col overflow-hidden">
+                  <div className="h-12 px-4 border-b border-hairline dark:border-surface-dark-elevated flex items-center justify-between text-xs font-mono uppercase tracking-wider text-muted dark:text-on-dark-soft font-semibold">
+                    <span className="flex items-center gap-2">
+                      <i className="fa-solid fa-layer-group text-primary"></i>
+                      {t.sources}
+                    </span>
+                    <span>({activeSources.length})</span>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {activeSources.length === 0 ? (
+                      <div className="text-center text-xs text-muted-soft py-12 px-4">
+                        <AnthropicSpike className="w-8 h-8 text-hairline dark:text-surface-dark-elevated mx-auto mb-3" />
+                        Ask a question to inspect retrieved knowledge chunks, BM25/RRF fusion metrics, and citations.
+                      </div>
+                    ) : (
+                      activeSources.map((s, idx) => (
+                        <div key={idx} className="bg-canvas dark:bg-surface-dark border border-hairline dark:border-surface-dark-elevated rounded-lg p-3.5 shadow-xs">
+                          <div className="flex items-center justify-between text-xs mb-1.5">
+                            <span className="font-semibold text-ink dark:text-on-dark truncate max-w-[170px]">{s.entity}</span>
+                            <span className="text-[11px] font-mono bg-surface-card dark:bg-surface-dark-elevated text-primary px-1.5 py-0.5 rounded">
+                              {t.score}: {s.score}
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-mono text-muted dark:text-on-dark-soft mb-2">
+                            {s.section}
+                          </div>
+                          <p className="text-xs text-body dark:text-on-dark-soft line-clamp-4 font-sans bg-surface-soft dark:bg-surface-dark-soft p-2.5 rounded border border-hairline-soft dark:border-surface-dark-elevated">
+                            {s.snippet}
+                          </p>
+                          {s.url && (
+                            <a 
+                              href={s.url} 
+                              target="_blank" 
+                              rel="noreferrer" 
+                              className="text-[11px] text-primary hover:text-primary-active mt-2.5 inline-flex items-center gap-1 font-medium"
+                            >
+                              <span>Read on Tensura Wiki</span>
+                              <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                            </a>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: ENTITIES */}
+            {tab === 'entities' && (
+              <div className="h-full flex flex-col p-8 overflow-y-auto max-w-6xl mx-auto">
+                <div className="flex items-end justify-between mb-8 pb-4 border-b border-hairline dark:border-surface-dark-elevated">
+                  <div>
+                    <h2 className="font-display text-4xl font-normal text-ink dark:text-on-dark tracking-tight">{t.entities}</h2>
+                    <p className="text-sm text-muted dark:text-muted-soft mt-1">Structured Character Profiles & Portable Infoboxes</p>
+                  </div>
+                   <div className="flex items-center gap-2">
+                     <input 
+                       type="text"
+                       value={searchEntityText}
+                       onChange={(e) => setSearchEntityText(e.target.value)}
+                       placeholder={t.searchEntity}
+                       className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-3.5 py-2 text-sm w-72 focus:outline-none focus:border-primary"
+                     />
+                     <button onClick={() => fetchEntities()} disabled={loadingEntities} title="Refresh entities" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-primary hover:bg-surface-card dark:hover:bg-surface-dark-soft transition">
+                       <i className={`fa-solid fa-arrows-rotate ${loadingEntities ? 'fa-spin' : ''}`}></i>
+                     </button>
+                   </div>
+                </div>
+
+                {loadingEntities ? (
+                  <div className="py-24 text-center"><i className="fa-solid fa-circle-notch fa-spin text-3xl text-primary"></i></div>
+                ) : entities.length === 0 ? (
+                  <div className="text-center py-24 text-muted text-sm">{t.noEntities}</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {entities
+                      .filter(e => e.entity.toLowerCase().includes(searchEntityText.toLowerCase()))
+                      .map((ent, idx) => (
+                        <div key={idx} className="bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-lg p-6 flex flex-col justify-between hover:border-primary/50 transition">
+                          <div>
+                            <h3 className="font-display text-2xl font-normal text-ink dark:text-on-dark tracking-tight">{ent.entity}</h3>
+                            {ent.infobox?.species && (
+                              <p className="text-xs font-mono uppercase tracking-wider text-primary mt-1">{ent.infobox.species}</p>
+                            )}
+                            <div className="flex flex-wrap gap-1.5 mt-3 mb-4">
+                              {ent.categories.slice(0, 3).map((c, ci) => (
+                                <span key={ci} className="text-[11px] bg-canvas dark:bg-surface-dark border border-hairline dark:border-surface-dark-elevated text-muted dark:text-on-dark-soft px-2 py-0.5 rounded-full font-medium">
+                                  {c}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-4 border-t border-hairline dark:border-surface-dark-elevated text-xs font-medium">
+                            <button 
+                              onClick={() => fetchEntityDetail(ent.entity)}
+                              className="text-primary hover:text-primary-active flex items-center gap-1"
+                            >
+                              <span>{t.viewDetail}</span>
+                              <i className="fa-solid fa-arrow-right text-[10px]"></i>
+                            </button>
+                            <a href={ent.canonical_url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink dark:hover:text-on-dark">
+                              <i className="fa-solid fa-arrow-up-right-from-square"></i>
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB: KNOWLEDGE GRAPH */}
+            {tab === 'graph' && (
+              <div className="h-full flex flex-col p-6 overflow-hidden relative">
+                <div className="flex items-center justify-between mb-4 z-10">
+                  <div>
+                    <h2 className="font-display text-3xl font-normal text-ink dark:text-on-dark tracking-tight flex items-center gap-2.5">
+                      <AnthropicSpike className="w-5 h-5 text-primary" />
+                      <span>{t.graph}</span>
+                    </h2>
+                    <p className="text-xs text-muted dark:text-muted-soft">Interactive Entity & Relationship Network</p>
+                  </div>
+                  <button 
+                    onClick={fetchGraphData}
+                    className="text-xs bg-primary hover:bg-primary-active text-on-primary font-medium px-4 py-2 rounded-md transition shadow-xs flex items-center gap-2"
+                  >
+                    <i className="fa-solid fa-arrows-rotate"></i>
+                     <span>{graphLoading ? 'Updating...' : 'Refresh Graph'}</span>
+                  </button>
+                </div>
+
+                <div className="flex-1 bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-lg overflow-hidden relative shadow-inner">
+                  {graphLoading ? (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <i className="fa-solid fa-circle-notch fa-spin text-3xl text-primary"></i>
+                    </div>
+                  ) : graphData.nodes.length === 0 ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-muted text-xs p-6 text-center">
+                      <AnthropicSpike className="w-10 h-10 text-hairline dark:text-surface-dark-elevated mb-3" />
+                      No graph data indexed yet. Run the crawler & parser to build character relationship triples.
+                    </div>
+                  ) : (
+                    <canvas 
+                      ref={canvasRef} 
+                      className="w-full h-full cursor-grab active:cursor-grabbing"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: ADMIN & SYNC */}
+            {tab === 'admin' && (
+              <div className="h-full p-8 overflow-y-auto max-w-4xl mx-auto space-y-8">
+                <div>
+                  <h2 className="font-display text-4xl font-normal text-ink dark:text-on-dark tracking-tight">{t.admin}</h2>
+                  <p className="text-sm text-muted dark:text-muted-soft mt-1">Live Ingestion Watermarks & Knowledge Base Sync</p>
+                </div>
+
+                {/* Stats Cards (Cream Card / Dark Card) */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted dark:text-muted-soft">{t.totalArticles}</div>
+                    <div className="font-display text-2xl font-normal text-ink dark:text-on-dark mt-1">{adminStats.total_articles || 3403}</div>
+                  </div>
+                  <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted dark:text-muted-soft">{t.crawledPages}</div>
+                    <div className="font-display text-2xl font-normal text-primary mt-1">{adminStats.crawled_pages || 0}</div>
+                  </div>
+                  <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted dark:text-muted-soft">{t.parsedEntities}</div>
+                    <div className="font-display text-2xl font-normal text-ink dark:text-on-dark mt-1">{adminStats.parsed_entities || 0}</div>
+                  </div>
+                  <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted dark:text-muted-soft">{t.relationships}</div>
+                    <div className="font-display text-2xl font-normal text-ink dark:text-on-dark mt-1">{adminStats.relationships_count || 0}</div>
+                  </div>
+                  <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted dark:text-muted-soft">{t.cachedEmbeddings}</div>
+                    <div className="font-display text-2xl font-normal text-ink dark:text-on-dark mt-1">{adminStats.cached_embeddings || 0}</div>
+                  </div>
+                  <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted dark:text-muted-soft">{t.totalChunks}</div>
+                    <div className="font-display text-2xl font-normal text-primary mt-1">{adminStats.total_chunks || 0}</div>
+                  </div>
+                 </div>
+
+                 {/* Detailed runtime and progress overview */}
+                 <div className="grid lg:grid-cols-3 gap-4">
+                   <div className="lg:col-span-2 bg-surface-dark text-on-dark p-6 rounded-lg space-y-5">
+                     <div className="flex items-start justify-between gap-4">
+                       <div>
+                         <div className="text-[10px] font-mono uppercase tracking-widest text-on-dark-soft">Live operation</div>
+                         <h3 className="font-display text-2xl font-normal mt-1">{adminStats.status_message || 'ระบบพร้อมใช้งาน'}</h3>
+                       </div>
+                       <span className={`shrink-0 text-[10px] font-mono uppercase tracking-widest px-2.5 py-1 rounded-full ${adminStats.is_syncing ? 'bg-primary text-white' : adminStats.stage === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-success/20 text-green-300'}`}>
+                         {adminStats.is_syncing ? 'RUNNING' : (adminStats.stage || 'IDLE')}
+                       </span>
+                     </div>
+                     <div>
+                       <div className="flex justify-between text-xs text-on-dark-soft mb-2"><span>Progress</span><span className="text-on-dark font-mono">{adminStats.current_step || 0} / {adminStats.total_steps || '—'} · {adminStats.progress_pct || 0}%</span></div>
+                       <div className="h-3 bg-surface-dark-soft rounded-full overflow-hidden"><div className="h-full bg-primary rounded-full transition-all duration-500" style={{width: `${Math.max(0, Math.min(100, adminStats.progress_pct || 0))}%`}} /></div>
+                     </div>
+                     <div className="grid sm:grid-cols-3 gap-3 text-xs">
+                       <div className="bg-surface-dark-elevated rounded-md p-3"><div className="text-on-dark-soft">Current item</div><div className="mt-1 truncate">{adminStats.current_item || '—'}</div></div>
+                       <div className="bg-surface-dark-elevated rounded-md p-3"><div className="text-on-dark-soft">Last sync</div><div className="mt-1 font-mono">{adminStats.last_sync || 'ยังไม่เคย sync'}</div></div>
+                       <div className="bg-surface-dark-elevated rounded-md p-3"><div className="text-on-dark-soft">Mode</div><div className="mt-1">{adminStats.is_syncing ? 'Background job' : 'Ready'}</div></div>
+                     </div>
+                   </div>
+                   <div className="bg-surface-card dark:bg-surface-dark-soft p-6 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                     <div className="text-[10px] font-mono uppercase tracking-widest text-primary">Runtime snapshot</div>
+                     <div className="mt-4 space-y-3 text-xs">
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Embedding</span><span className="font-mono text-ink dark:text-on-dark">BGE-M3 ONNX INT8</span></div>
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Vector store</span><span className="font-mono text-ink dark:text-on-dark">LanceDB</span></div>
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Cached vectors</span><span className="font-mono text-ink dark:text-on-dark">{adminStats.cached_embeddings || 0}</span></div>
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Graph nodes</span><span className="font-mono text-ink dark:text-on-dark">{adminStats.parsed_entities || 0}</span></div>
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Graph edges</span><span className="font-mono text-ink dark:text-on-dark">{adminStats.relationships_count || 0}</span></div>
+                     </div>
+                   </div>
+                 </div>
+
+                 {/* Pipeline Stages Stepper */}
+                <div className="bg-surface-card dark:bg-surface-dark-soft p-5 rounded-lg border border-hairline dark:border-surface-dark-elevated space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-display text-lg font-normal text-ink dark:text-on-dark flex items-center gap-2">
+                      <i className="fa-solid fa-bars-progress text-primary text-sm"></i>
+                      <span>{t.pipelineStages}</span>
+                    </h3>
+                    <span className={`text-xs font-mono px-2.5 py-1 rounded-full uppercase font-medium ${
+                      adminStats.is_syncing 
+                        ? 'bg-primary/10 text-primary animate-pulse' 
+                        : adminStats.stage === 'error'
+                        ? 'bg-red-500/10 text-red-500'
+                        : 'bg-surface-soft dark:bg-surface-dark text-muted dark:text-on-dark-soft'
+                    }`}>
+                      {adminStats.stage || 'IDLE'}
+                    </span>
+                  </div>
+
+                  {/* 4 Steps Indicator */}
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    {[
+                      { key: 'crawling', icon: 'fa-cloud-arrow-down', title: '1. Crawl', desc: 'MediaWiki API' },
+                      { key: 'parsing', icon: 'fa-diagram-project', title: '2. Parse', desc: 'Infobox & Graph' },
+                      { key: 'embedding', icon: 'fa-brain', title: '3. Embed', desc: 'BGE-M3 INT8 ONNX' },
+                      { key: 'completed', icon: 'fa-circle-check', title: '4. Indexed', desc: 'LanceDB Ready' },
+                    ].map((step) => {
+                      const isActive = adminStats.stage === step.key;
+                      const isDone = (
+                        (step.key === 'crawling' && ['parsing', 'embedding', 'completed'].includes(adminStats.stage)) ||
+                        (step.key === 'parsing' && ['embedding', 'completed'].includes(adminStats.stage)) ||
+                        (step.key === 'embedding' && adminStats.stage === 'completed') ||
+                        (step.key === 'completed' && adminStats.stage === 'completed')
+                      );
+
+                      return (
+                        <div 
+                          key={step.key} 
+                          className={`p-3 rounded-md border transition-all ${
+                            isActive 
+                              ? 'border-primary bg-primary/5 dark:bg-primary/10 text-primary'
+                              : isDone
+                              ? 'border-hairline dark:border-surface-dark-elevated bg-surface-soft dark:bg-surface-dark text-ink dark:text-on-dark'
+                              : 'border-hairline/40 dark:border-surface-dark-elevated/40 opacity-50 text-muted'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 font-semibold text-[11px]">
+                            <i className={`fa-solid ${step.icon} ${isActive ? 'animate-bounce' : ''}`}></i>
+                            <span>{step.title}</span>
+                          </div>
+                          <p className="text-[10px] text-muted dark:text-muted-soft mt-1 truncate">{step.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Status message and Live Progress Bar */}
+                  <div className="pt-2">
+                    <div className="text-xs text-body-strong dark:text-on-dark flex items-center gap-2 mb-2">
+                      {adminStats.is_syncing && <i className="fa-solid fa-circle-notch fa-spin text-primary"></i>}
+                      <span className="font-mono">{adminStats.status_message}</span>
+                    </div>
+
+                    {adminStats.is_syncing && (
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-mono text-muted dark:text-on-dark-soft">
+                          <span>ความคืบหน้า: {adminStats.current_step} / {adminStats.total_steps || '—'}</span>
+                          <span className="font-bold text-primary">{adminStats.progress_pct || 0}%</span>
+                        </div>
+                        <div className="w-full bg-surface-soft dark:bg-surface-dark rounded-full h-2.5 overflow-hidden border border-hairline/50 dark:border-surface-dark-elevated">
+                          <div 
+                            className="bg-primary h-full transition-all duration-300 rounded-full" 
+                            style={{ width: `${Math.max(2, adminStats.progress_pct || 0)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Actions: Callout Card Style */}
+                <div className="bg-surface-card dark:bg-surface-dark-soft p-6 rounded-lg border border-hairline dark:border-surface-dark-elevated space-y-4">
+                  <h3 className="font-display text-2xl font-normal text-ink dark:text-on-dark">Trigger Ingestion Jobs</h3>
+                  <div className="flex flex-wrap gap-3">
+                    <button 
+                      onClick={() => triggerSync(true)}
+                      disabled={adminStats.is_syncing}
+                      className="bg-primary hover:bg-primary-active disabled:bg-primary-disabled text-on-primary text-xs font-medium px-5 py-2.5 rounded-md transition shadow-xs flex items-center gap-2"
+                    >
+                      <i className="fa-solid fa-arrows-rotate"></i>
+                      <span>{t.syncNow}</span>
+                    </button>
+                    <button 
+                      onClick={() => triggerSync(false)}
+                      disabled={adminStats.is_syncing}
+                      className="bg-canvas dark:bg-surface-dark hover:bg-surface-soft dark:hover:bg-surface-dark-elevated border border-hairline dark:border-surface-dark-elevated text-ink dark:text-on-dark text-xs font-medium px-5 py-2.5 rounded-md transition flex items-center gap-2"
+                    >
+                      <i className="fa-solid fa-cloud-arrow-down"></i>
+                      <span>{t.syncFull}</span>
+                    </button>
+                    <button 
+                      onClick={triggerEmbed}
+                      disabled={adminStats.is_syncing}
+                      className="bg-canvas dark:bg-surface-dark hover:bg-surface-soft dark:hover:bg-surface-dark-elevated border border-primary text-primary hover:bg-primary hover:text-white dark:hover:text-white text-xs font-medium px-5 py-2.5 rounded-md transition flex items-center gap-2 shadow-xs"
+                    >
+                      <i className="fa-solid fa-brain"></i>
+                      <span>{t.embedOnly}</span>
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted dark:text-on-dark-soft">
+                    * <strong>{t.syncNow}</strong>: ดึงเฉพาะหน้าที่อัปเดต | <strong>{t.syncFull}</strong>: ดึงทั้งหมดตั้งแต่ต้น | <strong>{t.embedOnly}</strong>: แปลงเวกเตอร์บันทึกเข้า LanceDB ทันที
+                  </p>
+                </div>
+
+              </div>
+            )}
+          </main>
+
+          {/* Modal: Entity Detail */}
+          {selectedEntity && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-canvas dark:bg-surface-dark border border-hairline dark:border-surface-dark-elevated rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+                <div className="p-5 border-b border-hairline dark:border-surface-dark-elevated flex justify-between items-center">
+                  <h3 className="font-display text-2xl font-normal text-ink dark:text-on-dark tracking-tight">{selectedEntity.entity}</h3>
+                  <button onClick={() => setSelectedEntity(null)} className="text-muted hover:text-ink dark:hover:text-on-dark p-1">
+                    <i className="fa-solid fa-xmark text-lg"></i>
+                  </button>
+                </div>
+                <div className="p-6 overflow-y-auto space-y-5">
+                  {selectedEntity.infobox && (
+                    <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
+                      <h4 className="text-xs font-mono uppercase tracking-widest text-primary mb-3 font-semibold">Infobox Overview</h4>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {Object.entries(selectedEntity.infobox).map(([k, v]) => (
+                          v && typeof v === 'string' && (
+                            <div key={k}>
+                              <span className="text-muted dark:text-on-dark-soft capitalize">{k}: </span>
+                              <span className="font-medium text-ink dark:text-on-dark">{v}</span>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <h4 className="text-xs font-mono uppercase tracking-widest text-muted dark:text-on-dark-soft mb-3 font-semibold">Sections ({selectedEntity.sections?.length || 0})</h4>
+                    <div className="space-y-2.5">
+                      {selectedEntity.sections?.map((s, idx) => (
+                        <div key={idx} className="border border-hairline dark:border-surface-dark-elevated rounded-md p-3 text-xs bg-canvas dark:bg-surface-dark">
+                          <span className="font-semibold text-ink dark:text-on-dark">{s.section_path}</span>
+                          <p className="text-body dark:text-on-dark-soft mt-1 line-clamp-3 leading-relaxed">{s.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: Settings */}
+          {isSettingsOpen && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-canvas dark:bg-surface-dark border border-hairline dark:border-surface-dark-elevated rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-5">
+                <div className="flex justify-between items-center border-b border-hairline dark:border-surface-dark-elevated pb-3">
+                  <h3 className="font-display text-2xl font-normal text-ink dark:text-on-dark flex items-center gap-2">
+                    <AnthropicSpike className="w-4 h-4 text-primary" />
+                    <span>{t.settings}</span>
+                  </h3>
+                  <button onClick={() => setIsSettingsOpen(false)} className="text-muted hover:text-ink dark:hover:text-on-dark">
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+
+                 <div className="space-y-5 text-xs">
+                   <div className="border-b border-hairline dark:border-surface-dark-elevated pb-2">
+                     <div className="text-[10px] font-mono uppercase tracking-widest text-primary">01 · Model Runtime</div>
+                     <p className="text-muted dark:text-on-dark-soft mt-1">เลือกผู้ให้บริการและค่าการเชื่อมต่อสำหรับการตอบคำถาม</p>
+                   </div>
+                   <div>
+                    <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.llmProvider}</label>
+                    <select 
+                      value={settings.provider} 
+                      onChange={(e) => {
+                        const newProv = e.target.value;
+                        let defaultModel = settings.model;
+                        if (newProv === 'openrouter') defaultModel = 'minimax/minimax-m3:free';
+                        else if (newProv === 'ollama') defaultModel = 'llama3.1:8b';
+                        else if (newProv === 'gemini') defaultModel = 'gemini-2.5-flash';
+                        else if (newProv === 'openai') defaultModel = 'gpt-4o-mini';
+                        else if (newProv === 'anthropic') defaultModel = 'claude-3-5-sonnet-20241022';
+                        setSettings({...settings, provider: newProv, model: defaultModel});
+                      }}
+                      className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary"
+                    >
+                      <option value="openrouter">OpenRouter (Free & Cloud Models, Recommended)</option>
+                      <option value="ollama">Ollama (Fully Local, $0/mo)</option>
+                      <option value="gemini">Google Gemini (Free Tier / Cloud)</option>
+                      <option value="openai">OpenAI (Cloud)</option>
+                      <option value="anthropic">Anthropic Claude (Cloud)</option>
+                      <option value="lmstudio">LM Studio (Local OpenAI API)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.modelName}</label>
+                    <input 
+                      type="text" 
+                      value={settings.model} 
+                      placeholder="e.g. minimax/minimax-m3:free"
+                      onChange={(e) => setSettings({...settings, model: e.target.value})}
+                      className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary font-mono text-[11px]"
+                    />
+                  </div>
+
+                   {settings.provider !== 'ollama' && (
+                     <div>
+                       <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.apiKey}</label>
+                       <input type="password" value={settings.apiKey || ''}
+                         placeholder={settings.provider === 'openrouter' ? 'sk-or-v1-...' : 'API Key...'}
+                         onChange={(e) => setSettings({...settings, apiKey: e.target.value})}
+                         className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary font-mono text-[11px]" />
+                       <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">
+                         {settings.provider === 'openrouter' && <span>รับคีย์ฟรีหรือเติมเครดิตได้ที่ <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-primary underline">openrouter.ai/keys</a></span>}
+                       </p>
+                     </div>
+                   )}
+
+                   {(settings.provider === 'lmstudio' || settings.provider === 'openai' || settings.provider === 'openrouter') && (
+                     <div>
+                       <label className="block font-medium mb-1 text-ink dark:text-on-dark">API Base URL</label>
+                       <input type="text" value={settings.baseUrl || ''} onChange={(e) => setSettings({...settings, baseUrl: e.target.value})}
+                         placeholder={settings.provider === 'lmstudio' ? 'http://localhost:1234/v1' : 'ใช้ค่าเริ่มต้นของ provider'}
+                         className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary font-mono text-[11px]" />
+                     </div>
+                   )}
+
+                   <div>
+                     <label className="block font-medium mb-1 text-ink dark:text-on-dark">บุคลิกและคำสั่ง AI</label>
+                     <textarea value={settings.systemPrompt || ''}
+                       onChange={(e) => setSettings({...settings, systemPrompt: e.target.value})}
+                       placeholder="เช่น คุณคือผู้ช่วย Tensura ที่สุภาพ เป็นกันเอง และตอบโดยอ้างอิงเฉพาะข้อมูลใน Knowledge Base..."
+                       rows="6"
+                       className="w-full resize-y bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-3 text-[12px] leading-relaxed text-ink dark:text-on-dark focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                     <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">ใช้กำหนดโทนภาษา รูปแบบคำตอบ และกฎการตอบของ AI สำหรับโปรเจกต์นี้</p>
+                   </div>
+
+                   <div className="border-b border-hairline dark:border-surface-dark-elevated pb-2 pt-1">
+                     <div className="text-[10px] font-mono uppercase tracking-widest text-primary">02 · Retrieval & Response</div>
+                     <p className="text-muted dark:text-on-dark-soft mt-1">ควบคุมจำนวนข้อมูลและความยาวของคำตอบ</p>
+                   </div>
+
+
+                   <div>
+                    <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.embeddingEngine}</label>
+                    <select 
+                      value={settings.embeddingBackend} 
+                      onChange={(e) => setSettings({...settings, embeddingBackend: e.target.value})}
+                      className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary"
+                    >
+                      <option value="onnx">ONNX Runtime (Fast CPU, Recommended)</option>
+                      <option value="default">Standard PyTorch</option>
+                    </select>
+                   </div>
+
+                  <div>
+                     <label className="block font-medium mb-1 text-ink dark:text-on-dark">Max Output Tokens: {settings.maxTokens}</label>
+                     <input type="range" min="128" max="16384" step="128" value={settings.maxTokens || 4096}
+                       onChange={(e) => setSettings({...settings, maxTokens: e.target.value})} className="w-full accent-primary" />
+                     <div className="flex justify-between text-[10px] text-muted dark:text-on-dark-soft"><span>128</span><span>4,096</span><span>8,192</span><span>16,384</span></div>
+                     <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">แนะนำ 4,096 สำหรับถามตอบทั่วไป · 8,192 สำหรับคำตอบละเอียด · 16,384 สำหรับสรุปหลายหัวข้อ (อาจช้าหรือใช้โควตาเพิ่ม)</p>
+                   </div>
+
+                  <div>
+                    <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.quantization}</label>
+                    <select 
+                      value={settings.quantization} 
+                      onChange={(e) => setSettings({...settings, quantization: e.target.value})}
+                      className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark focus:border-primary"
+                    >
+                      <option value="int8">INT8 Quantized (~570MB, 4x smaller, 2x faster)</option>
+                      <option value="none">Full Precision FP32 (~2.27GB)</option>
+                    </select>
+                  </div>
+
+                  <details className="border border-hairline dark:border-surface-dark-elevated rounded-md p-3" open>
+                    <summary className="cursor-pointer font-medium text-ink dark:text-on-dark">04 · ตั้งค่าขั้นสูง</summary>
+                    <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1 mb-4">ค่าที่ละเอียดขึ้นสำหรับการปรับประสิทธิภาพ การแบ่งข้อมูล และการดึง Wiki</p>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block font-medium mb-1 text-ink dark:text-on-dark">Embedding Model</label>
+                        <input value={settings.embeddingModel || ''} onChange={(e) => setSettings({...settings, embeddingModel: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 font-mono text-[11px] text-ink dark:text-on-dark" />
+                        <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">เปลี่ยนแล้วต้องสร้าง Embedding ใหม่ และต้องมีโมเดลอยู่ในเครื่อง</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Embedding Device</label><select value={settings.embeddingDevice || 'cpu'} onChange={(e) => setSettings({...settings, embeddingDevice: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark"><option value="cpu">CPU (แนะนำ)</option><option value="cuda">CUDA / NVIDIA GPU</option><option value="auto">Auto</option></select></div>
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Embedding Batch Size: {settings.embeddingBatchSize || 8}</label><input type="range" min="1" max="64" step="1" value={settings.embeddingBatchSize || 8} onChange={(e) => setSettings({...settings, embeddingBatchSize: e.target.value})} className="w-full accent-primary" /><p className="text-[10px] text-muted dark:text-on-dark-soft">RAM น้อยให้ใช้ 1–8</p></div>
+                      </div>
+                      <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Reranker Model</label><input value={settings.rerankerModel || ''} onChange={(e) => setSettings({...settings, rerankerModel: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 font-mono text-[11px] text-ink dark:text-on-dark" /><p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">โมเดลขนาดใหญ่อาจใช้ RAM มาก และถูกปิดไว้ตามค่าเริ่มต้น</p></div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Chunk ต่ำสุด</label><input type="number" min="100" value={settings.chunkMinTokens || 400} onChange={(e) => setSettings({...settings, chunkMinTokens: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark" /></div>
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Chunk สูงสุด</label><input type="number" min="100" value={settings.chunkMaxTokens || 800} onChange={(e) => setSettings({...settings, chunkMaxTokens: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark" /></div>
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Overlap %</label><input type="number" min="0" max="50" value={settings.chunkOverlap ?? 15} onChange={(e) => setSettings({...settings, chunkOverlap: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark" /></div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Crawler Batch</label><input type="number" min="1" value={settings.crawlerBatchSize || 50} onChange={(e) => setSettings({...settings, crawlerBatchSize: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark" /></div>
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Crawler Delay (วินาที)</label><input type="number" min="0" step="0.1" value={settings.crawlerDelay ?? 0.5} onChange={(e) => setSettings({...settings, crawlerDelay: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark" /></div>
+                        <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Checkpoint ทุก (หน้า)</label><input type="number" min="1" value={settings.crawlerCheckpoint || 100} onChange={(e) => setSettings({...settings, crawlerCheckpoint: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark" /></div>
+                      </div>
+                      <div className="space-y-2"><div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Storage: Data Directory</label><input value={settings.storageDataDir || ''} onChange={(e) => setSettings({...settings, storageDataDir: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 font-mono text-[11px] text-ink dark:text-on-dark" /></div><div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Storage: Vector Database</label><input value={settings.storageVectorDir || ''} onChange={(e) => setSettings({...settings, storageVectorDir: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 font-mono text-[11px] text-ink dark:text-on-dark" /></div><div><label className="block font-medium mb-1 text-ink dark:text-on-dark">Storage: Raw Data</label><input value={settings.storageRawDir || ''} onChange={(e) => setSettings({...settings, storageRawDir: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 font-mono text-[11px] text-ink dark:text-on-dark" /></div><p className="text-[10px] text-muted dark:text-on-dark-soft">การเปลี่ยนตำแหน่งต้อง Restart server และย้ายข้อมูลด้วยตนเอง</p></div>
+                      <button type="button" onClick={resetAdvancedSettings} className="w-full border border-hairline dark:border-surface-dark-elevated text-muted hover:text-ink dark:hover:text-on-dark py-2 rounded-md">คืนค่าการตั้งค่าขั้นสูง</button>
+                    </div>
+                  </details>
+
+                  <div>
+                     <label className="block font-medium mb-1 text-ink dark:text-on-dark">{t.topK}: {settings.topK} <span className="text-muted dark:text-on-dark-soft font-normal">(สูงสุด 30)</span></label>
+                    <input 
+                      type="range" 
+                      min="1" 
+                       max="30" 
+                      value={settings.topK} 
+                      onChange={(e) => setSettings({...settings, topK: e.target.value})}
+                       className="w-full accent-primary"
+                     />
+                     <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">ค่าแนะนำ 5–10 · ค่าสูงจะค้นข้อมูลมากขึ้นแต่ใช้ context และเวลาเพิ่มขึ้น</p>
+                  </div>
+
+                   <div className="flex items-center justify-between py-1">
+                    <span className="font-medium text-ink dark:text-on-dark">{t.enableRerank}</span>
+                    <input 
+                      type="checkbox" 
+                      checked={false} 
+                      disabled={true}
+                      onChange={(e) => setSettings({...settings, enableReranking: e.target.checked})}
+                      className="rounded accent-primary"
+                    />
+                   </div>
+
+                   <div className="border-b border-hairline dark:border-surface-dark-elevated pb-2 pt-1">
+                     <div className="text-[10px] font-mono uppercase tracking-widest text-primary">03 · Embedding Runtime</div>
+                     <p className="text-muted dark:text-on-dark-soft mt-1">ระบบใช้ BGE-M3 ONNX INT8 local ประมาณ 543 MB เพื่อประหยัด RAM</p>
+                   </div>
+
+                  <div className="flex items-center justify-between py-1">
+                    <span className="font-medium text-ink dark:text-on-dark">{t.enableBM25}</span>
+                    <input 
+                      type="checkbox" 
+                      checked={settings.enableBM25} 
+                      onChange={(e) => setSettings({...settings, enableBM25: e.target.checked})}
+                      className="rounded accent-primary"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-hairline dark:border-surface-dark-elevated">
+                  <button 
+                    onClick={handleSaveSettings}
+                    className="w-full bg-primary hover:bg-primary-active text-on-primary font-medium py-2.5 rounded-md shadow-xs transition text-sm"
+                  >
+                    {t.save}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Footer (Dark Navy Surface) with Mandatory CC BY-SA 3.0 Attribution */}
+          <footer className="h-10 px-6 border-t border-hairline dark:border-surface-dark-elevated bg-surface-dark text-on-dark-soft text-[11px] font-sans flex items-center justify-between z-20">
+            <div className="flex items-center gap-2">
+              <AnthropicSpike className="w-3.5 h-3.5 text-primary" />
+              <span>WikiRAG &middot; Tensura Knowledge System</span>
+            </div>
+            <span>{t.licenseNotice}</span>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

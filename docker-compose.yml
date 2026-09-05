@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  wikirag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wikirag-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./projects:/app/projects
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - EMBEDDING_BACKEND=onnx
+      - EMBEDDING_QUANTIZATION=int8
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: wikirag-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  hf_cache:
+  ollama_storage:
