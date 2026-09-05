@@ -19,6 +19,32 @@ class ChatRequest(BaseModel):
     enable_bm25: bool = False
     reranker_model: Optional[str] = None
     temperature: float = 0.1
+    verification_mode: str = "off"  # off | verify_only | suggest | auto
+    verification_strictness: str = "balanced"  # fast | balanced | detailed
+    verify_numbers: bool = True
+    verify_names: bool = True
+    verify_skill_ranks: bool = True
+    verify_relationships: bool = True
+    verify_citations: bool = True
+    verify_unsupported: bool = True
+
+
+class VerificationRequest(BaseModel):
+    query: str
+    answer: str
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    project: str = "tensura"
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    verification_strictness: str = "balanced"
+    verify_numbers: bool = True
+    verify_names: bool = True
+    verify_skill_ranks: bool = True
+    verify_relationships: bool = True
+    verify_citations: bool = True
+    verify_unsupported: bool = True
 
 
 class ConversationCreateRequest(BaseModel):
@@ -97,3 +123,8 @@ class SyncStatus(BaseModel):
     total_steps: int = 0
     progress_pct: float = 0.0
     current_item: Optional[str] = None
+    cancel_requested: bool = False
+    model_loaded: bool = False
+    embedding_model: Optional[str] = None
+    embedding_device: Optional[str] = None
+    memory_mb: Optional[float] = None

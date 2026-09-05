@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikirag"
-version = "2.0.1"
+version = "2.1.0"
 description = "Production-quality, fully-local RAG platform for fandom and knowledge wikis"
 readme = "README.md"
 authors = [{ name = "Solo Developer" }]

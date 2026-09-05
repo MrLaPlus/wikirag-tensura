@@ -5,6 +5,8 @@ import sqlite3
 import gc
 import threading
 import time
+import shutil
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -22,6 +24,7 @@ from wikirag.api.models import (
     SyncStatus,
     ConversationCreateRequest,
     ConversationUpdateRequest,
+    VerificationRequest,
 )
 from wikirag.api.chat_history import ChatHistoryStore
 from wikirag.chunking.chunker import SectionAwareChunker
@@ -43,10 +46,11 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# Enable CORS for local dev and frontend
+# Allow same-origin plus explicitly configured development origins.
+_cors_origins = [item.strip() for item in os.getenv("WIKIRAG_CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if item.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,7 +81,27 @@ _SYNC_STATUS = {
     "current_step": 0,
     "total_steps": 0,
     "progress_pct": 0.0,
+    "cancel_requested": False,
+    "current_item": None,
 }
+_SYNC_LOGS: List[Dict[str, Any]] = []
+
+
+def _sync_log(message: str, level: str = "info"):
+    """Keep a small in-memory live log for the Admin panel."""
+    entry = {"time": time.strftime("%H:%M:%S"), "level": level, "message": message}
+    _SYNC_LOGS.append(entry)
+    del _SYNC_LOGS[:-150]
+    logger.info(f"[admin] {message}") if level == "info" else logger.warning(f"[admin] {message}")
+
+
+def _cancelled() -> bool:
+    if _SYNC_STATUS.get("cancel_requested"):
+        _SYNC_STATUS["stage"] = "cancelled"
+        _SYNC_STATUS["status_message"] = "ยกเลิกงานตามคำขอแล้ว"
+        _sync_log("งานถูกยกเลิกโดยผู้ใช้", "warning")
+        return True
+    return False
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _CHAT_HISTORY = ChatHistoryStore(str(_PROJECT_ROOT / "data" / "tensura" / "chat_history.db"))
 _PIPELINE_LOCK = threading.RLock()
@@ -238,6 +262,42 @@ def test_llm_provider(payload: Dict[str, Any]):
     except Exception as e:
         logger.warning("LLM provider test failed for %s: %s", payload.get("provider", "unknown"), str(e)[:300])
         raise HTTPException(status_code=502, detail="Provider test failed. Check provider, model, API key, and server logs.")
+
+
+def _verification_prompt(req: VerificationRequest) -> str:
+    checks = []
+    if req.verify_numbers: checks.append("ตัวเลขและวันที่")
+    if req.verify_names: checks.append("ชื่อบุคคล สถานที่ และชื่อเฉพาะ")
+    if req.verify_skill_ranks: checks.append("ระดับและชื่อสกิล/อาวุธ")
+    if req.verify_relationships: checks.append("ความสัมพันธ์และสังกัด")
+    if req.verify_citations: checks.append("การอ้างอิงแหล่งข้อมูล")
+    if req.verify_unsupported: checks.append("ข้อความที่ไม่มีหลักฐานรองรับ")
+    source_text = "\n".join(f"[{i+1}] {s.get('entity','Unknown')} / {s.get('section','General')}: {s.get('snippet','')}" for i, s in enumerate(req.sources))
+    return ("คุณเป็นผู้ตรวจสอบข้อเท็จจริงของระบบ RAG ระดับความละเอียด " + req.verification_strictness + "\n"
+            + "ตรวจเฉพาะจาก Sources ที่ให้มา ห้ามเติมความรู้จากภายนอก ตรวจหัวข้อ: " + (", ".join(checks) or "ความสอดคล้องทั่วไป") + "\n"
+            + 'ตอบเป็น JSON เท่านั้น: {"overall":"correct|partially_correct|unsupported|contradicted|insufficient_evidence","summary":"สรุปสั้น ๆ","issues":[{"claim":"ข้อความที่พบปัญหา","status":"supported|unsupported|contradicted|uncertain","reason":"เหตุผล","source_indexes":[1]}],"suggested_answer":"คำตอบที่แก้แล้วถ้าจำเป็น"}\n\n'
+            + "คำถาม: " + req.query + "\nคำตอบต้นฉบับ:\n" + req.answer + "\nSources:\n" + source_text)
+
+
+@app.post("/api/chat/verify")
+def verify_chat_answer(req: VerificationRequest):
+    """Runs a second-pass fact check without modifying the original answer."""
+    try:
+        cfg = load_project_config(req.project)
+        llm = get_llm_provider(provider_name=req.llm_provider or cfg.llm.default_provider,
+                               model_name=req.llm_model or cfg.llm.default_model,
+                               api_key=req.api_key, base_url=req.base_url)
+        response = llm.generate(_verification_prompt(req), temperature=0, max_tokens=2048)
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            result = {"overall": "insufficient_evidence", "summary": raw[:1000], "issues": [], "suggested_answer": ""}
+        result["raw"] = response.text
+        return result
+    except Exception as e:
+        logger.warning("Answer verification failed: %s", str(e)[:300])
+        raise HTTPException(status_code=502, detail="Answer verification failed")
 
 
 @app.get("/api/projects", response_model=List[ProjectInfo])
@@ -494,6 +554,8 @@ def _background_sync_task(project: str, incremental: bool):
     _SYNC_STATUS["total_steps"] = 3403
     _SYNC_STATUS["progress_pct"] = 0.0
     _SYNC_STATUS["status_message"] = "กำลังดึงข้อมูลบทความจาก MediaWiki API..."
+    _SYNC_STATUS["cancel_requested"] = False
+    _sync_log(f"เริ่ม Sync โปรเจกต์ {project}")
 
     try:
         cfg = load_project_config(project)
@@ -503,6 +565,7 @@ def _background_sync_task(project: str, incremental: bool):
         records = []
         gen = connector.sync_incremental() if incremental else connector.crawl_all(resume=True)
         for rec in gen:
+            if _cancelled(): return
             records.append(rec)
             count = len(records)
             _SYNC_STATUS["current_step"] = count
@@ -530,6 +593,7 @@ def _background_sync_task(project: str, incremental: bool):
 
             new_chunks = []
             for i, raw_rec in enumerate(records, start=1):
+                if _cancelled(): return
                 parsed_page = parser.parse_page(raw_rec, alias_map=alias_map)
                 if parsed_page:
                     graph_builder.process_page(parsed_page)
@@ -554,6 +618,7 @@ def _background_sync_task(project: str, incremental: bool):
                     embed_batch_size = 32
                     
                     for b_start in range(0, total_chunks, embed_batch_size):
+                        if _cancelled(): return
                         b_end = min(b_start + embed_batch_size, total_chunks)
                         batch_chunks = new_chunks[b_start:b_end]
                         batch_texts = [c["chunk_text"] for c in batch_chunks]
@@ -575,11 +640,13 @@ def _background_sync_task(project: str, incremental: bool):
         _SYNC_STATUS["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
         if not _SYNC_STATUS["status_message"].startswith("ดึงและแยก"):
             _SYNC_STATUS["status_message"] = "การซิงก์ข้อมูลเสร็จสมบูรณ์เรียบร้อยแล้ว!"
+        _sync_log("Sync เสร็จสมบูรณ์")
 
     except Exception as e:
         logger.error(f"Sync task error: {e}")
         _SYNC_STATUS["stage"] = "error"
         _SYNC_STATUS["status_message"] = f"เกิดข้อผิดพลาดในการ Sync: {e}"
+        _sync_log(f"Sync ล้มเหลว: {e}", "error")
     finally:
         _SYNC_STATUS["is_syncing"] = False
 
@@ -604,6 +671,8 @@ def _background_embed_task(project: str):
     _SYNC_STATUS["total_steps"] = 0
     _SYNC_STATUS["progress_pct"] = 0.0
     _SYNC_STATUS["status_message"] = "กำลังเตรียมโมเดลและดึงข้อมูลเพื่อแปลงเวกเตอร์..."
+    _SYNC_STATUS["cancel_requested"] = False
+    _sync_log(f"เริ่ม Embedding โปรเจกต์ {project}")
 
     try:
         cfg = load_project_config(project)
@@ -625,6 +694,7 @@ def _background_embed_task(project: str):
         pages_processed = 0
 
         for rec in connector.crawl_all(resume=False):
+            if _cancelled(): return
             pages_processed += 1
             _SYNC_STATUS["current_item"] = rec.get("title", "")
             parsed_page = parser.parse_page(rec, alias_map=alias_map)
@@ -634,6 +704,7 @@ def _background_embed_task(project: str):
 
             # When we have enough chunks, embed and flush to LanceDB
             if len(batch_chunks) >= 32:
+                if _cancelled(): return
                 texts = [c["chunk_text"] for c in batch_chunks]
                 vecs = pipeline.embedder.embed_texts(texts, show_progress=False)
                 pipeline.vectorstore.upsert_chunks(batch_chunks, vecs)
@@ -655,11 +726,13 @@ def _background_embed_task(project: str):
         _SYNC_STATUS["progress_pct"] = 100.0
         _SYNC_STATUS["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
         _SYNC_STATUS["status_message"] = f"แปลงเวกเตอร์สำเร็จทั้งหมด {total_embedded} chunks จาก {pages_processed} หน้า!"
+        _sync_log("Embedding เสร็จสมบูรณ์")
 
     except Exception as e:
         logger.error(f"Embed task error: {e}")
         _SYNC_STATUS["stage"] = "error"
         _SYNC_STATUS["status_message"] = f"เกิดข้อผิดพลาดในการแปลงเวกเตอร์: {e}"
+        _sync_log(f"Embedding ล้มเหลว: {e}", "error")
     finally:
         _SYNC_STATUS["is_syncing"] = False
 
@@ -673,6 +746,68 @@ def trigger_embed(background_tasks: BackgroundTasks, project: str = "tensura"):
 
     background_tasks.add_task(_background_embed_task, project)
     return {"message": "Embedding process started in background", "project": project}
+
+
+@app.post("/api/admin/cancel")
+def cancel_admin_task():
+    """Request cooperative cancellation; the current batch is allowed to finish."""
+    if not _SYNC_STATUS["is_syncing"]:
+        return {"message": "ไม่มีงานที่กำลังทำงานอยู่"}
+    _SYNC_STATUS["cancel_requested"] = True
+    _sync_log("ส่งคำขอยกเลิกงานแล้ว", "warning")
+    return {"message": "Cancellation requested"}
+
+
+@app.get("/api/admin/logs")
+def get_admin_logs(limit: int = 80):
+    return {"logs": _SYNC_LOGS[-max(1, min(limit, 150)):], "is_syncing": _SYNC_STATUS["is_syncing"]}
+
+
+@app.post("/api/admin/backup")
+def backup_admin_data(project: str = "tensura"):
+    """Create a recoverable local zip of settings and SQLite metadata, excluding model/vector files."""
+    cfg = load_project_config(project)
+    backup_dir = Path(cfg.storage.data_dir) / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = backup_dir / f"wikirag-{project}-{stamp}.zip"
+    candidates = [Path(cfg.storage.state_file), Path(cfg.storage.alias_map_path), Path(cfg.storage.data_dir) / "graph.db", Path(_CHAT_HISTORY.db_path)]
+    settings_path = Path(cfg.storage.data_dir) / "settings.json"
+    if settings_path.exists(): candidates.append(settings_path)
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in candidates:
+            if path.exists() and path.is_file(): archive.write(path, arcname=path.name)
+    _sync_log(f"สร้าง Backup: {target.name}")
+    return {"path": str(target), "filename": target.name}
+
+
+@app.get("/api/admin/backups")
+def list_admin_backups(project: str = "tensura"):
+    backup_dir = Path(load_project_config(project).storage.data_dir) / "backups"
+    return {"backups": sorted([p.name for p in backup_dir.glob(f"wikirag-{project}-*.zip")], reverse=True)[:20]}
+
+
+@app.post("/api/admin/restore")
+def restore_admin_backup(filename: str, project: str = "tensura"):
+    """Restore only files created by the local backup endpoint."""
+    if _SYNC_STATUS["is_syncing"]:
+        raise HTTPException(status_code=409, detail="Stop active jobs before restoring")
+    backup_dir = Path(load_project_config(project).storage.data_dir) / "backups"
+    candidate = (backup_dir / Path(filename).name).resolve()
+    if candidate.parent != backup_dir.resolve() or not candidate.is_file() or candidate.suffix.lower() != ".zip":
+        raise HTTPException(status_code=404, detail="Backup not found")
+    root = Path(load_project_config(project).storage.data_dir).resolve()
+    with zipfile.ZipFile(candidate) as archive:
+        for member in archive.infolist():
+            safe_name = Path(member.filename).name
+            if not safe_name or member.is_dir():
+                continue
+            destination = (root / safe_name).resolve()
+            if destination.parent != root:
+                continue
+            destination.write_bytes(archive.read(member))
+    _sync_log(f"กู้คืน Backup: {candidate.name}", "warning")
+    return {"message": "Backup restored", "filename": candidate.name}
 
 
 @app.get("/api/admin/status", response_model=SyncStatus)
@@ -738,4 +873,9 @@ def get_sync_status(project: str = "tensura"):
         total_steps=_SYNC_STATUS.get("total_steps", 0),
         progress_pct=_SYNC_STATUS.get("progress_pct", 0.0),
         current_item=_SYNC_STATUS.get("current_item"),
+        cancel_requested=_SYNC_STATUS.get("cancel_requested", False),
+        model_loaded=bool(_PIPELINE_CACHE),
+        embedding_model=getattr(getattr(load_project_config(project), "embedding", None), "model_name", None),
+        embedding_device=getattr(getattr(load_project_config(project), "embedding", None), "device", None),
+        memory_mb=round(__import__("resource").getrusage(__import__("resource").RUSAGE_SELF).ru_maxrss / 1024, 1) if os.name != "nt" else None,
     )

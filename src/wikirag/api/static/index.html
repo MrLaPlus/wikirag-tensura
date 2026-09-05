@@ -245,7 +245,7 @@
       const [settings, setSettings] = useState(() => {
         const saved = localStorage.getItem('wikirag_settings');
         if (saved) {
-          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: false, enableRetry: parsed.enableRetry !== false,
+          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: false, enableRetry: parsed.enableRetry !== false, verificationMode: parsed.verificationMode || 'off', verificationStrictness: parsed.verificationStrictness || 'balanced',
             embeddingModel: parsed.embeddingModel || 'BAAI/bge-m3', embeddingDevice: parsed.embeddingDevice || 'cpu', embeddingBatchSize: parsed.embeddingBatchSize || 8,
             rerankerModel: parsed.rerankerModel || 'BAAI/bge-reranker-v2-m3', chunkMinTokens: parsed.chunkMinTokens || 400, chunkMaxTokens: parsed.chunkMaxTokens || 800,
             chunkOverlap: parsed.chunkOverlap ?? 15, crawlerBatchSize: parsed.crawlerBatchSize || 50, crawlerDelay: parsed.crawlerDelay ?? 0.5,
@@ -257,6 +257,9 @@
           model: 'minimax/minimax-m3:free',
           fallbackModel: '',
           enableRetry: true,
+          verificationMode: 'off',
+          verificationStrictness: 'balanced',
+          verifyNumbers: true, verifyNames: true, verifySkillRanks: true, verifyRelationships: true, verifyCitations: true, verifyUnsupported: true,
            apiKey: '',
            baseUrl: '',
           embeddingBackend: 'onnx',
@@ -286,6 +289,7 @@
       const [conversations, setConversations] = useState([]);
       const [conversationId, setConversationId] = useState(null);
       const [historyLoading, setHistoryLoading] = useState(false);
+      const [historySearch, setHistorySearch] = useState('');
 
       const fetchConversations = async () => {
         try {
@@ -461,6 +465,7 @@
       const [entityMissingRankOnly, setEntityMissingRankOnly] = useState(false);
       const [entityVisibleLimit, setEntityVisibleLimit] = useState(60);
       const [selectedEntity, setSelectedEntity] = useState(null);
+      const [entityDetailTab, setEntityDetailTab] = useState('overview');
       const [loadingEntities, setLoadingEntities] = useState(false);
 
       // Admin stats
@@ -479,6 +484,11 @@
       const [graphSearch, setGraphSearch] = useState('');
       const [graphViewReset, setGraphViewReset] = useState(0);
       const [selectedRelationship, setSelectedRelationship] = useState(null);
+      const [graphShowLabels, setGraphShowLabels] = useState(true);
+      const [graphLimit, setGraphLimit] = useState(120);
+      const [graphHover, setGraphHover] = useState(null);
+      const graphHoverRef = useRef(null);
+      const [adminLogs, setAdminLogs] = useState([]);
       const canvasRef = useRef(null);
 
       const t = I18N[lang];
@@ -523,7 +533,7 @@
         fetchEntities();
         fetchConversations();
         fetch('/api/settings?project=tensura').then(r => r.ok ? r.json() : {}).then(saved => {
-          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: false, enableRetry: saved.enableRetry !== false}));
+          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: false, enableRetry: saved.enableRetry !== false, verificationMode: saved.verificationMode || 'off', verificationStrictness: saved.verificationStrictness || 'balanced'}));
         }).catch(() => {});
       }, []);
 
@@ -555,6 +565,8 @@
             const data = await res.json();
             setAdminStats(data);
           }
+          const logRes = await fetch('/api/admin/logs?limit=60');
+          if (logRes.ok) setAdminLogs((await logRes.json()).logs || []);
         } catch (e) {
           console.error(e);
         }
@@ -582,7 +594,8 @@
           const res = await fetch(`/api/entities/${encodeURIComponent(name)}`);
           if (res.ok) {
             const data = await res.json();
-            setSelectedEntity(data);
+            try { const graphRes = await fetch(`/api/graph/${encodeURIComponent(name)}?depth=1`); if (graphRes.ok) data.relationships = await graphRes.json(); } catch (_) {}
+            setSelectedEntity(data); setEntityDetailTab('overview');
           }
         } catch (e) {
           console.error(e);
@@ -672,7 +685,7 @@
       const fetchGraphData = async (silent = false) => {
         if (!silent) setGraphLoading(true);
         try {
-          const res = await fetch('/api/graph?limit=120');
+          const res = await fetch(`/api/graph?limit=${graphLimit}`);
           if (res.ok) {
             const data = await res.json();
             setGraphData(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
@@ -682,6 +695,30 @@
         } finally {
           setGraphLoading(false);
         }
+      };
+
+      const renameConversation = async (conversation) => {
+        const title = prompt(lang === 'th' ? 'ชื่อบทสนทนาใหม่' : 'New conversation name', conversation.title);
+        if (!title?.trim()) return;
+        await fetch(`/api/conversations/${encodeURIComponent(conversation.id)}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: title.trim()})});
+        fetchConversations();
+      };
+
+      const retryAssistantMessage = (idx) => {
+        if (isStreaming || idx < 1 || messages[idx - 1]?.role !== 'user') return;
+        const question = messages[idx - 1].content;
+        setConversationId(null); setMessages(prev => prev.slice(0, idx));
+        setTimeout(() => handleSendMessage(null, question), 0);
+      };
+
+      const cancelAdminTask = async () => { await fetch('/api/admin/cancel', {method: 'POST'}); fetchAdminStatus(); };
+      const restoreLatestBackup = async () => { const r = await fetch('/api/admin/backups'); const data = r.ok ? await r.json() : {backups: []}; const latest = data.backups?.[0]; if (!latest) return alert('ยังไม่มี Backup'); if (!confirm(`กู้คืน ${latest} หรือไม่?`)) return; const restore = await fetch(`/api/admin/restore?filename=${encodeURIComponent(latest)}`, {method: 'POST'}); alert(restore.ok ? 'กู้คืน Backup แล้ว กรุณารีสตาร์ตเซิร์ฟเวอร์' : 'กู้คืนไม่สำเร็จ'); };
+      const exportGraph = (format) => {
+        const data = format === 'json' ? JSON.stringify(visibleGraphData, null, 2) : JSON.stringify(visibleGraphData);
+        if (format === 'png') {
+          const link = document.createElement('a'); link.download = 'wikirag-graph.png'; link.href = canvasRef.current.toDataURL('image/png'); link.click(); return;
+        }
+        const link = document.createElement('a'); link.download = 'wikirag-graph.json'; link.href = URL.createObjectURL(new Blob([data], {type: 'application/json'})); link.click();
       };
 
       const visibleGraphData = useMemo(() => {
@@ -712,7 +749,7 @@
 
         const nodes = visibleGraphData.nodes.map((n, i) => ({
           ...n,
-          x: graphSearch && String(n.name || n.id).toLowerCase().includes(graphSearch.toLowerCase()) ? width / 2 : width / 2 + (Math.random() - 0.5) * (width * 0.7),
+          x: graphSearch && String(n.name || n.id).toLowerCase().includes(graphSearch.toLowerCase()) ? width / 2 : width * ({character: 0.25, skill: 0.5, location: 0.75}[n.entity_type] || 0.5) + (Math.random() - 0.5) * 120,
           y: graphSearch && String(n.name || n.id).toLowerCase().includes(graphSearch.toLowerCase()) ? height / 2 : height / 2 + (Math.random() - 0.5) * (height * 0.7),
           vx: 0,
           vy: 0,
@@ -802,7 +839,9 @@
 
           ctx.lineWidth = 1;
           for (const e of edges) {
-            ctx.strokeStyle = darkMode ? 'rgba(230,223,216,0.15)' : 'rgba(20,20,19,0.12)';
+            const edgeActive = graphHoverRef.current && (e === graphHoverRef.current || e.source === graphHoverRef.current.source || e.target === graphHoverRef.current.target);
+            ctx.strokeStyle = edgeActive ? '#cc785c' : (darkMode ? 'rgba(230,223,216,0.15)' : 'rgba(20,20,19,0.12)');
+            ctx.lineWidth = edgeActive ? 2 : 1;
             ctx.beginPath();
             ctx.moveTo(e.sourceNode.x, e.sourceNode.y);
             ctx.lineTo(e.targetNode.x, e.targetNode.y);
@@ -810,9 +849,11 @@
 
             let midX = (e.sourceNode.x + e.targetNode.x) / 2;
             let midY = (e.sourceNode.y + e.targetNode.y) / 2;
-            ctx.fillStyle = darkMode ? '#a09d96' : '#6c6a64';
-            ctx.font = '10px Inter, sans-serif';
-            ctx.fillText(e.relation_type, midX, midY);
+            if (graphShowLabels) {
+              ctx.fillStyle = darkMode ? '#a09d96' : '#6c6a64';
+              ctx.font = '10px Inter, sans-serif';
+              ctx.fillText(e.relation_type, midX, midY);
+            }
           }
 
           for (const n of nodes) {
@@ -824,9 +865,11 @@
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            ctx.fillStyle = darkMode ? '#faf9f5' : '#141413';
-            ctx.font = '500 11px Inter, sans-serif';
-            ctx.fillText(n.name, n.x + n.radius + 5, n.y + 4);
+            if (graphShowLabels) {
+              ctx.fillStyle = darkMode ? '#faf9f5' : '#141413';
+              ctx.font = '500 11px Inter, sans-serif';
+              ctx.fillText(n.name, n.x + n.radius + 5, n.y + 4);
+            }
           }
           ctx.restore();
 
@@ -846,6 +889,9 @@
         const handlePointerMove = (event) => {
           const screenPoint = getScreenPoint(event);
           const point = getCanvasPoint(event);
+          const hoveredEdge = findEdgeAt(point) || null;
+          graphHoverRef.current = hoveredEdge;
+          setGraphHover(hoveredEdge);
           if (!pointerDown) {
             canvas.style.cursor = findNodeAt(point) ? 'pointer' : 'grab';
             return;
@@ -884,10 +930,15 @@
         const handlePointerLeave = () => {
           if (!pointerDown) canvas.style.cursor = 'grab';
         };
+        const handleDoubleClick = (event) => {
+          const node = findNodeAt(getCanvasPoint(event));
+          if (node) fetchEntityDetail(node.name);
+        };
         canvas.addEventListener('pointerdown', handlePointerDown);
         canvas.addEventListener('pointermove', handlePointerMove);
         canvas.addEventListener('pointerup', handlePointerUp);
         canvas.addEventListener('pointerleave', handlePointerLeave);
+        canvas.addEventListener('dblclick', handleDoubleClick);
         canvas.addEventListener('wheel', handleWheel, { passive: false });
         canvas.style.cursor = 'grab';
 
@@ -897,9 +948,20 @@
           canvas.removeEventListener('pointermove', handlePointerMove);
           canvas.removeEventListener('pointerup', handlePointerUp);
           canvas.removeEventListener('pointerleave', handlePointerLeave);
+          canvas.removeEventListener('dblclick', handleDoubleClick);
           canvas.removeEventListener('wheel', handleWheel);
         };
-      }, [tab, visibleGraphData, graphSearch, darkMode, graphViewReset]);
+      }, [tab, visibleGraphData, graphSearch, darkMode, graphViewReset, graphShowLabels]);
+
+      const verifyAnswer = async (query, answer, sources) => {
+        if (!answer || settings.verificationMode === 'off') return;
+        setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? {...m, verification: {status: 'running'}} : m));
+        try {
+          const res = await fetch('/api/chat/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query, answer, sources, project: 'tensura', llm_provider: settings.provider, llm_model: settings.model, api_key: settings.apiKey || undefined, base_url: settings.baseUrl || undefined, verification_strictness: settings.verificationStrictness, verify_numbers: settings.verifyNumbers, verify_names: settings.verifyNames, verify_skill_ranks: settings.verifySkillRanks, verify_relationships: settings.verifyRelationships, verify_citations: settings.verifyCitations, verify_unsupported: settings.verifyUnsupported})});
+          const result = res.ok ? await res.json() : {overall: 'insufficient_evidence', summary: 'Verification failed'};
+          setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? {...m, verification: result, revisedAnswer: settings.verificationMode !== 'verify_only' ? result.suggested_answer : ''} : m));
+        } catch (error) { setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? {...m, verification: {overall: 'insufficient_evidence', summary: error.message}} : m)); }
+      };
 
       // Handle Streaming Chat via SSE
       const handleSendMessage = async (e, overrideQuery = null) => {
@@ -919,6 +981,7 @@
         setActiveSources([]);
         const startedAt = performance.now();
         let streamedText = '';
+        let currentSources = [];
         setChatMetrics({status: 'running'});
 
         setMessages(prev => [...prev, { role: 'assistant', content: '', sources: [] }]);
@@ -945,7 +1008,11 @@
               enable_reranking: settings.enableReranking,
               enable_bm25: settings.enableBM25,
               reranker_model: settings.rerankerModel || undefined,
-              temperature: parseFloat(settings.temperature),
+               temperature: parseFloat(settings.temperature),
+              verification_mode: settings.verificationMode || 'off',
+              verification_strictness: settings.verificationStrictness || 'balanced',
+              verify_numbers: settings.verifyNumbers !== false, verify_names: settings.verifyNames !== false, verify_skill_ranks: settings.verifySkillRanks !== false,
+              verify_relationships: settings.verifyRelationships !== false, verify_citations: settings.verifyCitations !== false, verify_unsupported: settings.verifyUnsupported !== false,
             })
 
           });
@@ -957,8 +1024,6 @@
           const reader = response.body.getReader();
           const decoder = new TextDecoder('utf-8');
           let buffer = '';
-          let currentSources = [];
-
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -989,6 +1054,8 @@
                   }
               } else if (eventType === 'conversation') {
                 try { setConversationId(JSON.parse(eventData).id); fetchConversations(); } catch (err) { console.error(err); }
+              } else if (eventType === 'fallback') {
+                try { const fallback = JSON.parse(eventData); setMessages(prev => { const next = [...prev]; next[next.length - 1].fallbackModel = fallback.model; return next; }); } catch (err) {}
               } else if (eventType === 'token') {
                 try {
                   const tokenObj = JSON.parse(eventData);
@@ -1013,6 +1080,7 @@
               }
             }
           }
+          if (streamedText && settings.verificationMode !== 'off') verifyAnswer(userMsg, streamedText, currentSources);
         } catch (error) {
           if (error.name === 'AbortError') {
             setMessages(prev => {
@@ -1173,12 +1241,14 @@
                   </div>
                   <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 pr-1">
                     {historyLoading && <div className="text-xs text-muted p-2">Loading...</div>}
-                    {conversations.map(c => (
+                    <input value={historySearch} onChange={e => setHistorySearch(e.target.value)} placeholder={lang === 'th' ? 'ค้นหาประวัติแชท...' : 'Search chat history...'} className="w-full mb-2 bg-canvas dark:bg-surface-dark border border-hairline dark:border-surface-dark-elevated rounded-md px-3 py-2 text-xs text-ink dark:text-on-dark" />
+                    {conversations.filter(c => !historySearch.trim() || c.title.toLowerCase().includes(historySearch.toLowerCase())).map(c => (
                       <div key={c.id} className={`group flex items-center gap-1 rounded-md ${conversationId === c.id ? 'bg-canvas dark:bg-surface-dark' : 'hover:bg-canvas/70 dark:hover:bg-surface-dark/70'}`}>
                         <button onClick={() => openConversation(c.id)} className="flex-1 min-w-0 text-left px-3 py-2.5">
                           <div className="truncate text-[13px] font-medium text-ink dark:text-on-dark">{c.title}</div>
                           <div className="text-[10px] text-muted dark:text-on-dark-soft mt-0.5">{c.message_count || 0} messages</div>
                         </button>
+                        <button onClick={() => renameConversation(c)} className="opacity-0 group-hover:opacity-100 px-1 text-muted hover:text-primary transition" title="Rename"><i className="fa-solid fa-pen text-[11px]"></i></button>
                         <button onClick={() => deleteConversation(c.id)} className="opacity-0 group-hover:opacity-100 px-2 text-muted hover:text-red-500 transition" title="Delete">
                           <i className="fa-solid fa-trash text-[11px]"></i>
                         </button>
@@ -1227,6 +1297,8 @@
                             className="markdown-body text-[15px] leading-relaxed"
                             dangerouslySetInnerHTML={{ __html: marked.parse(m.content || '...') }}
                           />
+                          {m.revisedAnswer && <div className="mt-4 border-l-2 border-primary pl-3"><div className="text-[10px] uppercase tracking-widest text-primary mb-1">คำตอบที่ปรับปรุงแล้ว</div><div className="markdown-body text-sm" dangerouslySetInnerHTML={{__html: marked.parse(m.revisedAnswer)}} /></div>}
+                          {m.verification && <div className="mt-4 rounded-md border border-hairline dark:border-surface-dark-elevated p-3 text-xs"><div className="flex items-center justify-between"><span className="font-mono uppercase tracking-widest text-primary">ผลตรวจสอบ</span><span className="font-semibold">{m.verification.status === 'running' ? 'กำลังตรวจ...' : ({correct:'ถูกต้อง', partially_correct:'ถูกต้องบางส่วน', unsupported:'ไม่มีหลักฐานรองรับ', contradicted:'ขัดแย้งกับแหล่งข้อมูล', insufficient_evidence:'ข้อมูลไม่เพียงพอ'}[m.verification.overall] || 'ตรวจแล้ว')}</span></div>{m.verification.summary && <p className="mt-2 text-muted dark:text-on-dark-soft">{m.verification.summary}</p>}{m.verification.issues?.length > 0 && <div className="mt-2 space-y-1">{m.verification.issues.map((issue, i) => <div key={i} className="text-amber-600 dark:text-amber-300">• {issue.claim}: {issue.reason}</div>)}</div>}</div>}
 
                            {m.sources && m.sources.length > 0 && (
                             <div className="mt-4 pt-3 border-t border-hairline dark:border-surface-dark-elevated flex flex-wrap gap-1.5">
@@ -1236,6 +1308,7 @@
                                   href={s.url || '#'} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
+                                  onClick={(event) => { if (s.entity) { event.preventDefault(); fetchEntityDetail(s.entity); } }}
                                   className="inline-flex items-center text-xs font-mono bg-canvas dark:bg-surface-dark text-primary hover:text-primary-active border border-hairline dark:border-surface-dark-elevated px-2 py-1 rounded transition"
                                 >
                                   [{s.index}] {s.entity} ({s.section})
@@ -1251,9 +1324,10 @@
                              ) : (
                                <>
                                  {m.content && <button onClick={() => copyMessage(m.content)} className="text-muted dark:text-on-dark-soft hover:text-primary transition flex items-center gap-1"><i className="fa-regular fa-copy"></i><span>{lang === 'th' ? 'คัดลอก' : 'Copy'}</span></button>}
-                                 {idx > 0 && !isStreaming && <button onClick={() => regenerateMessage(idx)} className="text-muted dark:text-on-dark-soft hover:text-primary transition flex items-center gap-1"><i className="fa-solid fa-rotate-right"></i><span>{lang === 'th' ? 'สร้างคำตอบใหม่' : 'Regenerate'}</span></button>}
-                               </>
-                             )}
+                                 {idx > 0 && !isStreaming && <button onClick={() => retryAssistantMessage(idx)} className="text-muted dark:text-on-dark-soft hover:text-primary transition flex items-center gap-1"><i className="fa-solid fa-rotate-right"></i><span>{m.content?.startsWith('Connection Error') ? (lang === 'th' ? 'ลองใหม่' : 'Retry') : (lang === 'th' ? 'สร้างคำตอบใหม่' : 'Regenerate')}</span></button>}
+                              </>
+                            )}
+                            {m.fallbackModel && <span className="text-amber-600 dark:text-amber-300">· Fallback: {m.fallbackModel}</span>}
                            </div>
                          </div>
                       </div>
@@ -1494,6 +1568,10 @@
                       <option value="all">ทุกความสัมพันธ์</option>
                       {[...new Set(graphData.edges.map(e => e.relation_type).filter(Boolean))].sort().map(rel => <option key={rel} value={rel}>{rel}</option>)}
                     </select>
+                    <label className="flex items-center gap-1 text-[11px] text-muted dark:text-on-dark-soft"><span>Nodes</span><select value={graphLimit} onChange={async (e) => { const n = Number(e.target.value); setGraphLimit(n); const r = await fetch(`/api/graph?limit=${n}`); if (r.ok) setGraphData(await r.json()); }} className="bg-canvas dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md px-1 py-2 text-xs text-ink dark:text-on-dark"><option value="60">60</option><option value="120">120</option><option value="240">240</option><option value="500">500</option></select></label>
+                    <button onClick={() => setGraphShowLabels(v => !v)} title="Show/hide labels" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary transition"><i className={`fa-solid ${graphShowLabels ? 'fa-tags' : 'fa-tag'}`}></i></button>
+                    <button onClick={() => exportGraph('json')} title="Export JSON" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary transition"><i className="fa-solid fa-file-code"></i></button>
+                    <button onClick={() => exportGraph('png')} title="Export PNG" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary transition"><i className="fa-solid fa-image"></i></button>
                     <button onClick={() => { setGraphViewReset(v => v + 1); setSelectedRelationship(null); }} title="Reset view" className="h-9 w-9 rounded-md border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary transition"><i className="fa-solid fa-crosshairs"></i></button>
                     <button onClick={fetchGraphData} className="text-xs bg-primary hover:bg-primary-active text-on-primary font-medium px-4 py-2 rounded-md transition shadow-xs flex items-center gap-2"><i className="fa-solid fa-arrows-rotate"></i><span>{graphLoading ? 'Updating...' : 'Refresh Graph'}</span></button>
                   </div>
@@ -1588,7 +1666,9 @@
                    <div className="bg-surface-card dark:bg-surface-dark-soft p-6 rounded-lg border border-hairline dark:border-surface-dark-elevated">
                      <div className="text-[10px] font-mono uppercase tracking-widest text-primary">Runtime snapshot</div>
                      <div className="mt-4 space-y-3 text-xs">
-                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Embedding</span><span className="font-mono text-ink dark:text-on-dark">BGE-M3 ONNX INT8</span></div>
+                       <div className="flex justify-between gap-3"><span className="text-muted dark:text-on-dark-soft">Embedding</span><span className="font-mono text-ink dark:text-on-dark text-right">{adminStats.embedding_model || 'BGE-M3'} / {adminStats.embedding_device || 'CPU'}</span></div>
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Model status</span><span className={adminStats.model_loaded ? 'text-green-500' : 'text-yellow-500'}>{adminStats.model_loaded ? 'Loaded' : 'Not loaded'}</span></div>
+                       <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Memory</span><span className="font-mono text-ink dark:text-on-dark">{adminStats.memory_mb ? `${adminStats.memory_mb} MB` : 'Unavailable'}</span></div>
                        <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Vector store</span><span className="font-mono text-ink dark:text-on-dark">LanceDB</span></div>
                        <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Cached vectors</span><span className="font-mono text-ink dark:text-on-dark">{adminStats.cached_embeddings || 0}</span></div>
                        <div className="flex justify-between"><span className="text-muted dark:text-on-dark-soft">Graph nodes</span><span className="font-mono text-ink dark:text-on-dark">{adminStats.parsed_entities || 0}</span></div>
@@ -1673,6 +1753,10 @@
                         </div>
                       </div>
                     )}
+                    <div className="mt-4 border-t border-hairline dark:border-surface-dark-elevated pt-3">
+                      <div className="text-[10px] font-mono uppercase tracking-widest text-primary mb-2">Live log</div>
+                      <div className="max-h-32 overflow-y-auto bg-surface-dark text-[10px] font-mono rounded-md p-2 space-y-1">{adminLogs.slice(-30).map((log, i) => <div key={i} className={log.level === 'error' ? 'text-red-300' : log.level === 'warning' ? 'text-yellow-300' : 'text-on-dark-soft'}>[{log.time}] {log.message}</div>)}</div>
+                    </div>
                   </div>
                 </div>
 
@@ -1704,6 +1788,9 @@
                       <i className="fa-solid fa-brain"></i>
                       <span>{t.embedOnly}</span>
                     </button>
+                    {adminStats.is_syncing && <button onClick={cancelAdminTask} className="bg-red-500 text-white text-xs font-medium px-5 py-2.5 rounded-md transition flex items-center gap-2"><i className="fa-solid fa-stop"></i><span>หยุดงาน</span></button>}
+                    <button onClick={async () => { const r = await fetch('/api/admin/backup', {method: 'POST'}); if (r.ok) alert('สร้าง Backup แล้ว'); }} className="border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary text-xs px-4 py-2.5 rounded-md"><i className="fa-solid fa-box-archive mr-1"></i>Backup</button>
+                    <button onClick={restoreLatestBackup} className="border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary text-xs px-4 py-2.5 rounded-md"><i className="fa-solid fa-clock-rotate-left mr-1"></i>Restore ล่าสุด</button>
                   </div>
                   <p className="text-xs text-muted dark:text-on-dark-soft">
                     * <strong>{t.syncNow}</strong>: ดึงเฉพาะหน้าที่อัปเดต | <strong>{t.syncFull}</strong>: ดึงทั้งหมดตั้งแต่ต้น | <strong>{t.embedOnly}</strong>: แปลงเวกเตอร์บันทึกเข้า LanceDB ทันที
@@ -1724,8 +1811,11 @@
                     <i className="fa-solid fa-xmark text-lg"></i>
                   </button>
                 </div>
+                <div className="flex gap-1 px-5 pt-3 border-b border-hairline dark:border-surface-dark-elevated">
+                  {[['overview','Overview'],['skills','Skills / Weapons'],['relations','Relations']].map(([key,label]) => <button key={key} onClick={() => setEntityDetailTab(key)} className={`px-3 py-2 text-xs border-b-2 ${entityDetailTab === key ? 'border-primary text-primary' : 'border-transparent text-muted'}`}>{label}</button>)}
+                </div>
                 <div className="p-6 overflow-y-auto space-y-5">
-                  {selectedEntity.infobox && (
+                  {entityDetailTab === 'overview' && selectedEntity.infobox && (
                     <div className="bg-surface-card dark:bg-surface-dark-soft p-4 rounded-lg border border-hairline dark:border-surface-dark-elevated">
                       <h4 className="text-xs font-mono uppercase tracking-widest text-primary mb-3 font-semibold">Infobox Overview</h4>
                       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1740,7 +1830,8 @@
                       </div>
                     </div>
                   )}
-                  <div>
+                  {entityDetailTab === 'overview' && <div className="flex flex-wrap gap-2 text-xs"><a href={selectedEntity.canonical_url} target="_blank" rel="noreferrer" className="text-primary hover:underline"><i className="fa-solid fa-arrow-up-right-from-square mr-1"></i>Open Wiki page</a>{(selectedEntity.aliases || []).map((alias, i) => <span key={i} className="px-2 py-1 rounded bg-surface-card dark:bg-surface-dark-soft text-muted">Alias: {alias}</span>)}</div>}
+                  {entityDetailTab !== 'relations' && <div>
                     <h4 className="text-xs font-mono uppercase tracking-widest text-muted dark:text-on-dark-soft mb-3 font-semibold">Sections ({selectedEntity.sections?.length || 0})</h4>
                     <div className="space-y-2.5">
                       {selectedEntity.sections?.map((s, idx) => (
@@ -1750,7 +1841,9 @@
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </div>}
+                  {entityDetailTab === 'skills' && <div className="space-y-2 text-xs"><h4 className="font-mono uppercase tracking-widest text-primary">Skills, Magic & Equipment</h4>{(selectedEntity.sections || []).filter(s => /skill|magic|weapon|equipment|ability|สกิล|เวท|อาวุธ|อุปกรณ์/i.test(`${s.section_path} ${s.text}`)).map((s, i) => <div key={i} className="border border-hairline dark:border-surface-dark-elevated rounded-md p-3"><span className="font-semibold">{s.section_path}</span><p className="mt-1 text-muted dark:text-on-dark-soft">{s.text}</p></div>)}{!(selectedEntity.sections || []).some(s => /skill|magic|weapon|equipment|ability|สกิล|เวท|อาวุธ|อุปกรณ์/i.test(`${s.section_path} ${s.text}`)) && <p className="text-muted">No categorized data found.</p>}</div>}
+                  {entityDetailTab === 'relations' && <div className="space-y-2 text-xs"><h4 className="font-mono uppercase tracking-widest text-primary">Related entities</h4>{(selectedEntity.relationships?.nodes || []).filter(n => n.name !== selectedEntity.entity).map((n, i) => <button key={i} onClick={() => fetchEntityDetail(n.name)} className="block w-full text-left border border-hairline dark:border-surface-dark-elevated rounded-md p-3 hover:border-primary text-ink dark:text-on-dark">{n.name}</button>)}{!(selectedEntity.relationships?.nodes || []).length && <p className="text-muted">No relationships indexed.</p>}</div>}
                 </div>
               </div>
             </div>
@@ -1860,6 +1953,13 @@
                        rows="6"
                        className="w-full resize-y bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-3 text-[12px] leading-relaxed text-ink dark:text-on-dark focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
                      <p className="text-[10px] text-muted dark:text-on-dark-soft mt-1">ใช้กำหนดโทนภาษา รูปแบบคำตอบ และกฎการตอบของ AI สำหรับโปรเจกต์นี้</p>
+                   </div>
+
+                   <div className="border-t border-b border-hairline dark:border-surface-dark-elevated py-3 space-y-3">
+                     <div className="text-[10px] font-mono uppercase tracking-widest text-primary">02A · Answer Verification</div>
+                     <p className="text-[10px] text-muted dark:text-on-dark-soft">ปิดเป็นค่าเริ่มต้น ระบบจะตรวจคำตอบรอบที่สองและเก็บคำตอบแรกไว้เสมอ ใช้ Token และเวลาเพิ่ม</p>
+                     <div><label className="block font-medium mb-1 text-ink dark:text-on-dark">โหมดตรวจคำตอบ</label><select value={settings.verificationMode || 'off'} onChange={e => setSettings({...settings, verificationMode: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark"><option value="off">ปิด — ตอบครั้งเดียว</option><option value="verify_only">ตรวจสอบอย่างเดียว</option><option value="suggest">ตรวจสอบและเสนอคำตอบใหม่</option><option value="auto">ตรวจสอบและแก้ไขอัตโนมัติ</option></select></div>
+                     {(settings.verificationMode || 'off') !== 'off' && <><div><label className="block font-medium mb-1 text-ink dark:text-on-dark">ความเข้มงวด</label><select value={settings.verificationStrictness || 'balanced'} onChange={e => setSettings({...settings, verificationStrictness: e.target.value})} className="w-full bg-surface-soft dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-md p-2 text-ink dark:text-on-dark"><option value="fast">เร็ว — ตรวจประเด็นหลัก</option><option value="balanced">สมดุล — แนะนำ</option><option value="detailed">ละเอียด — ตรวจทุกประโยค</option></select></div><div className="grid grid-cols-2 gap-2">{[['verifyNumbers','ตัวเลข/วันที่'],['verifyNames','ชื่อบุคคล'],['verifySkillRanks','ระดับสกิล'],['verifyRelationships','ความสัมพันธ์'],['verifyCitations','Citation'],['verifyUnsupported','ไม่มีหลักฐาน']].map(([key,label]) => <label key={key} className="flex items-center gap-2 text-[11px] text-ink dark:text-on-dark"><input type="checkbox" checked={settings[key] !== false} onChange={e => setSettings({...settings, [key]: e.target.checked})} className="accent-primary" />{label}</label>)}</div></>}
                    </div>
 
                    <div className="border-b border-hairline dark:border-surface-dark-elevated pb-2 pt-1">

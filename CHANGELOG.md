@@ -1,71 +1,47 @@
-# WikiRAG Tensura v2.0.1
+# WikiRAG Tensura v2.1.0
 
 ## ภาษาไทย
 
-รุ่น v2.0.1 ปรับปรุงประสบการณ์ใช้งานเว็บ การสำรวจฐานความรู้ และความเสถียรของการเรียก LLM
+### เพิ่มใหม่
 
-### เพิ่มและปรับปรุง
+- เพิ่มระบบตรวจสอบคำตอบรอบที่สอง โดยค่าเริ่มต้นปิดไว้
+- เก็บคำตอบแรกไว้และแสดงผลตรวจสอบแยกจากคำตอบเดิม
+- เพิ่มโหมด ปิด, ตรวจสอบอย่างเดียว, เสนอคำตอบใหม่ และแก้ไขอัตโนมัติ
+- เพิ่มระดับความเข้มงวด เร็ว, สมดุล และละเอียด
+- เปิด/ปิดการตรวจตัวเลข, ชื่อบุคคล, ระดับสกิล, ความสัมพันธ์, Citation และข้อมูลไม่มีหลักฐานแยกกัน
+- ตรวจสอบจาก Sources ของ RAG เท่านั้น และไม่แก้ไขคำตอบต้นฉบับ
+- เพิ่มแท็บผลตรวจสอบและคำตอบที่ปรับปรุงแล้วในหน้า Chat
+- เพิ่ม API `POST /api/chat/verify`
 
-- หน้า Entities แสดงจำนวนรายการแยกตามหมวด
-- แบ่งการแสดงผลเป็นชุดและโหลดเพิ่มทีละ 60 รายการ
-- กรองตาม Species, Rank, Status และ Affiliation
-- แสดงเฉพาะรายการที่ไม่มีข้อมูล Rank ได้
-- เรียงชื่อ A–Z, Z–A, ตามประเภท และตามระดับ
-- แสดง Rank ของอาวุธ อุปกรณ์ และ Entity ที่มีข้อมูล
-- Export รายการ Entities เป็น JSON หรือ CSV
-- Graph กรองตามประเภท Entity และประเภทความสัมพันธ์
-- ค้นหา Entity ใน Graph และโฟกัสไปยังผลการค้นหา
-- คลิก node เพื่อเปิดรายละเอียด และคลิกเส้นเพื่อดูความสัมพันธ์
-- ลาก node, เลื่อนพื้นที่, Zoom และ Reset มุมมอง Graph
-- Graph หยุดการจัดตำแหน่งเมื่อกราฟนิ่ง และไม่รีเซ็ตเมื่อข้อมูลไม่เปลี่ยน
-- Chat เลือกโมเดลจากรายการที่เตรียมไว้ได้
-- เพิ่ม Retry อัตโนมัติสำหรับ OpenRouter 429/502/503/504 พร้อมปุ่มเปิด/ปิด
-- รองรับ Fallback Model เมื่อโมเดลหลักใช้งานไม่ได้
-- แสดงเวลาและจำนวน token โดยประมาณของคำตอบ
-- Export แชทเป็น Markdown และล้างประวัติแชททั้งหมด
-- เพิ่มปุ่มทดสอบการเชื่อมต่อ Provider/API
-- Import และ Export การตั้งค่าโดยไม่รวม API key
-- จดจำภาษา สี และหน้าล่าสุดหลังรีเฟรช
-- รองรับ LM Studio ผ่าน OpenAI-compatible API อย่างถูกต้อง
-- คงระบบ Deduplicate, Embedding cache, Crawl checkpoint/resume และการกรอง secret จาก settings/logs
+### ปรับปรุงจาก v2.0.1
 
-### หมายเหตุ
-
-- ไม่รวม API key, ข้อมูลที่ Crawl แล้ว, ฐานข้อมูลเวกเตอร์ หรือโมเดลขนาดใหญ่
-- โมเดล Embedding BGE-M3 ONNX INT8 ต้องดาวน์โหลดแยกต่างหากตาม README
-- การนับ token ในหน้าเว็บเป็นค่าประมาณสำหรับการตอบแบบ streaming
+- เพิ่มรายละเอียดสถานะโมเดลและ Embedding ในหน้า Admin
+- เพิ่ม Live Log, ปุ่มหยุดงาน, Backup และ Restore ล่าสุด
+- เพิ่มการตรวจสอบความปลอดภัยของไฟล์ Backup ก่อน Restore
+- เพิ่มการแสดงโมเดลสำรองเมื่อมีการสลับโมเดล
+- เพิ่ม Citation ที่คลิกเปิด Entity ได้
+- ปรับ Graph ให้จัดกลุ่มโหนดตามประเภทและส่งออก PNG/JSON ได้
+- อัปเดต README ภาษาไทย/อังกฤษ และเอกสาร License/Notice
 
 ## English
 
-Version 2.0.1 improves the web experience, knowledge-base exploration, and LLM reliability.
+### Added
 
-### Added and improved
+- Optional second-pass answer verification, disabled by default
+- Preserves the original answer and shows verification separately
+- Modes for off, verify only, suggest a revised answer, and automatic revision
+- Fast, balanced, and detailed verification strictness levels
+- Independent checks for numbers, names, skill ranks, relationships, citations, and unsupported claims
+- Verification uses only retrieved RAG sources and never overwrites the original answer
+- Verification results and revised answers are displayed in the Chat UI
+- Added `POST /api/chat/verify`
 
-- Per-category counts in the Entities browser
-- Batched rendering with a Load More flow of 60 items
-- Species, Rank, Status, and Affiliation filters
-- A filter for entities with missing rank data
-- Name A–Z, Z–A, type, and rank sorting
-- Rank display for weapons, equipment, and other ranked entities
-- JSON and CSV export for filtered Entities results
-- Graph filters for entity types and relationship types
-- Graph search with focus on matching entities
-- Click nodes for details and click edges for relationship details
-- Drag nodes, pan the canvas, zoom, and reset the Graph view
-- Stable Graph layout that does not reset when refreshed data is unchanged
-- Model presets in Chat settings
-- Automatic retry for OpenRouter 429/502/503/504 responses with an on/off toggle
-- Fallback model support when the primary model fails
-- Response duration and estimated token count in the Chat header
-- Markdown chat export and clear-all chat history actions
-- Provider/API connectivity test button
-- Settings import and export without API keys
-- Persistent language, theme, and last active page preferences
-- Correct LM Studio support through the OpenAI-compatible API
-- Existing deduplication, embedding cache, crawl checkpoint/resume, and secret filtering retained
+### Improved from v2.0.1
 
-### Notes
-
-- API keys, crawled data, vector databases, and large model files are not included
-- The BGE-M3 ONNX INT8 embedding model must be downloaded separately as documented in the README
-- Token counts shown in the web UI are estimates for streaming responses
+- Expanded Admin model and embedding status
+- Added live logs, cooperative stop, backup, and latest-backup restore
+- Added safe archive validation before restore
+- Shows which fallback model was used
+- Citations can open the related Entity
+- Graph nodes are clustered by type and can be exported as PNG/JSON
+- Updated Thai/English README and license/notice documentation

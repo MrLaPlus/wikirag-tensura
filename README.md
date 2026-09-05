@@ -2,27 +2,37 @@
 
 [English version](README_EN.md)
 
-**รุ่นปัจจุบัน: v2.0.1** · ดูรายการเปลี่ยนแปลงที่ [CHANGELOG.md](CHANGELOG.md)
+## WikiRAG Tensura v2.1.0 — ภาษาไทย
 
-WikiRAG คือแพลตฟอร์ม Retrieval-Augmented Generation (RAG) แบบ local-first สำหรับเว็บวิกิและฐานความรู้ ภายใน repository นี้มีการตั้งค่าสำหรับฐานความรู้ Tensura, เครื่องมือ CLI, เว็บแอป FastAPI, ระบบค้นหาหลายภาษา, หน้าสำรวจตัวละคร, โครงข่ายความสัมพันธ์ และระบบ LLM ที่เปลี่ยนผู้ให้บริการได้
+WikiRAG คือระบบถามตอบฐานความรู้ Tensura แบบ local-first ใช้ RAG ค้นข้อมูลจาก Tensura Wiki แล้วตอบพร้อม Citation รองรับ OpenRouter, Ollama, LM Studio, Gemini, OpenAI และ Claude
 
-## ภาพรวมการทำงาน
+ฟีเจอร์ v2.1.0 เพิ่มระบบตรวจคำตอบรอบที่สองแบบเปิด/ปิดได้ ค่าเริ่มต้นคือปิด ระบบจะเก็บคำตอบแรกไว้เสมอ และตรวจตัวเลข ชื่อบุคคล ระดับสกิล ความสัมพันธ์ Citation และข้อมูลที่ไม่มีหลักฐานได้แยกกัน โดยเลือกระดับ เร็ว / สมดุล / ละเอียด ได้
+
+ดูรายการเปลี่ยนแปลงได้ที่ [CHANGELOG.md](CHANGELOG.md) และคู่มือภาษาอังกฤษที่ [README_EN.md](README_EN.md)
+
+WikiRAG is a local-first Retrieval-Augmented Generation (RAG) platform for fandom and knowledge wikis. This repository contains the Tensura knowledge-base configuration, CLI tools, FastAPI web application, multilingual retrieval, entity browsing, a knowledge graph, and pluggable LLM providers.
+
+**Current release: v2.1.0** · See [CHANGELOG.md](CHANGELOG.md)
+
+v2.1.0 adds optional second-pass answer verification. It is disabled by default. When enabled, the first answer is preserved and the system can verify citations, names, numbers, skill ranks, relationships, and unsupported claims using a configurable fast, balanced, or detailed pass.
+
+## Overview
 
 ```text
-MediaWiki API → Crawl → แยกวิเคราะห์ Wikitext/Infobox → แบ่ง Chunk ตาม Section
-→ สร้าง Embedding ด้วย BGE-M3 ONNX INT8 → LanceDB → ค้นคืนข้อมูล → LLM ตอบพร้อมแหล่งอ้างอิง
+MediaWiki API → Crawl → Wikitext/Infobox parsing → Section chunking
+→ BGE-M3 ONNX INT8 embeddings → LanceDB → Retrieval → LLM answer + citations
 ```
 
-หน้าเว็บรองรับคำถามภาษาไทยและภาษาอังกฤษ คำตอบจะอ้างอิงจากเนื้อหาวิกิที่ค้นพบ พร้อมลิงก์แหล่งข้อมูลและข้อความแสดงที่มาภายใต้สัญญาอนุญาต CC BY-SA
+The interface supports Thai and English questions. Answers are grounded in retrieved wiki passages and include source links plus the required CC BY-SA attribution.
 
-## สิ่งที่ต้องมี
+## Requirements
 
-- Python 3.10 ขึ้นไป (แนะนำ Python 3.11)
-- RAM ว่างประมาณ 2–4 GB ในช่วงเริ่มต้นโมเดล
-- อินเทอร์เน็ตสำหรับดาวน์โหลดแพ็กเกจและโมเดลครั้งแรก เว้นแต่มีไฟล์อยู่ในเครื่องแล้ว
-- ผู้ให้บริการ LLM แบบเลือกใช้ได้: OpenRouter, Ollama, LM Studio, Google Gemini, OpenAI หรือ Anthropic Claude
+- Python 3.10 or newer (Python 3.11 recommended)
+- Approximately 2–4 GB available RAM during model initialization
+- Internet access for initial package/model downloads, unless dependencies are already local
+- Optional LLM runtime/API: OpenRouter, Ollama, LM Studio, Google Gemini, OpenAI, or Anthropic Claude
 
-## ติดตั้ง
+## Installation
 
 ```bash
 python -m venv .venv
@@ -36,35 +46,35 @@ python -m venv .venv
 pip install -e .
 ```
 
-สำหรับการพัฒนาและการทดสอบ:
+For development and tests:
 
 ```bash
 pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-## โมเดล Embedding
+## Embedding model
 
-WikiRAG ใช้โมเดล BGE-M3 ONNX INT8 ขนาดเล็ก แทนโมเดล PyTorch ขนาดหลาย GB:
+WikiRAG uses the lightweight BGE-M3 ONNX INT8 model, not the full multi-GB PyTorch model:
 
-- โมเดล: [gpahal/bge-m3-onnx-int8](https://huggingface.co/gpahal/bge-m3-onnx-int8)
-- ตำแหน่งไฟล์ในเครื่อง: `models/bge-m3-onnx/model_int8.onnx`
-- ขนาดไฟล์ปัจจุบัน: ประมาณ 543 MB
+- Model: [gpahal/bge-m3-onnx-int8](https://huggingface.co/gpahal/bge-m3-onnx-int8)
+- Local file: `models/bge-m3-onnx/model_int8.onnx`
+- Current file size: approximately 543 MB
 - Runtime: ONNX Runtime
-- จำนวนมิติของเวกเตอร์: 1024
-- โมเดลต้นฉบับ: [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3)
+- Vector dimension: 1024
+- Base model: [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3)
 
-ไฟล์โมเดลจะไม่ถูกรวมใน Git เนื่องจากมีขนาดเกินข้อจำกัดไฟล์ปกติ 100 MB ของ GitHub ให้ดาวน์โหลดจาก Hugging Face แล้ววางไว้ตามตำแหน่งด้านบน และตรวจสอบให้ tokenizer มีอยู่ใน Hugging Face cache ด้วย ระบบจะไม่ดาวน์โหลดโมเดล BGE-M3 ขนาดใหญ่แบบเงียบ ๆ ตอนเริ่มทำงาน
+The model file is intentionally kept outside normal Git commits because it is larger than GitHub's 100 MB regular-file limit. Download it from Hugging Face and place it at the path above. The tokenizer must also be available in the local Hugging Face cache. Startup does not silently download the full BGE-M3 model.
 
-## การตั้งค่า
+## Configuration
 
-สร้างไฟล์ environment ในเครื่อง:
+Create a local environment file:
 
 ```bash
 copy .env.example .env
 ```
 
-การตั้งค่าเริ่มต้นของโปรเจกต์ Tensura ใช้ OpenRouter:
+For the default Tensura configuration, set OpenRouter:
 
 ```env
 DEFAULT_LLM_PROVIDER=openrouter
@@ -72,35 +82,35 @@ DEFAULT_LLM_MODEL=minimax/minimax-m3:free
 OPENROUTER_API_KEY=your_key_here
 ```
 
-ห้าม commit ไฟล์ `.env` หรือ API key จริง การตั้งค่าโปรเจกต์อยู่ที่ [`projects/tensura.yaml`](projects/tensura.yaml) โดยค่า Embedding เริ่มต้นคือ `onnx` และ `int8` ส่วน Reranker ขนาดใหญ่จะปิดไว้เป็นค่าเริ่มต้นเพื่อป้องกันการใช้ RAM สูงเกินไป
+Never commit `.env` or any real API key. Project settings are in [`projects/tensura.yaml`](projects/tensura.yaml). The default embedding configuration uses `onnx` and `int8`; the large cross-encoder reranker is disabled by default to protect RAM.
 
-## ขั้นตอนนำเข้าข้อมูล
+## Ingestion workflow
 
-ให้รันคำสั่งจากโฟลเดอร์หลักของ repository:
+Run these commands from the repository root.
 
 ```bash
-# 1. Crawl บทความใน namespace-0
+# 1. Crawl namespace-0 wiki articles
 wikirag crawl --project tensura
 
-# 2. แยกวิเคราะห์ Wikitext, Infobox และ Section
+# 2. Parse Wikitext, Infoboxes, and sections
 wikirag parse --project tensura
 
-# 3. สร้าง Embedding และจัดเก็บลง LanceDB
+# 3. Create embeddings and index into LanceDB
 wikirag embed --project tensura
 
-# 4. ดูสถิติการนำเข้าข้อมูล
+# 4. View ingestion statistics
 wikirag stats --project tensura
 
-# 5. ดึงเฉพาะการเปลี่ยนแปลงล่าสุดจากวิกิ
+# 5. Fetch only later wiki changes
 wikirag sync --project tensura --incremental
 ```
 
-Crawler มีระบบ checkpoint และสามารถทำงานต่อหลังหยุดกลางคันได้อย่างปลอดภัย ควรตรวจสอบสถิติทุกครั้งหลัง sync เนื่องจากข้อมูลที่สร้างขึ้นจะถูกเก็บไว้ในเครื่อง
+The crawler uses checkpoints and can be resumed safely after interruption. Review statistics after a sync because generated data is stored locally.
 
-## ถามตอบผ่าน CLI
+## CLI questions
 
 ```bash
-# OpenRouter (ค่าเริ่มต้นของ Tensura)
+# OpenRouter (Tensura project default)
 wikirag query "ริมุรุ เทมเพสต์ มีสกิลและความสามารถอะไรบ้าง" --project tensura
 
 # Ollama
@@ -116,36 +126,36 @@ wikirag query "What is Rimuru's species?" --project tensura --llm openai:gpt-4o-
 wikirag query "Summarize Veldora's role" --project tensura --llm anthropic:claude-3-5-sonnet-20241022
 ```
 
-กำหนด API key ของผู้ให้บริการที่ต้องการใน `.env` ก่อนใช้งาน ผู้ใช้ ChatGPT และ OpenAI API เป็นคนละระบบกัน โดย provider ของ OpenAI ต้องใช้ OpenAI API key
+Set the relevant API key in `.env` before using a cloud provider. ChatGPT consumer accounts are not the same as the OpenAI API; the OpenAI provider requires an OpenAI API key.
 
 ## LM Studio
 
-LM Studio เปิด endpoint ภายในเครื่องที่เข้ากันได้กับ OpenAI ให้เปิด Local Server ใน LM Studio ก่อน แล้วตั้งค่าดังนี้:
+LM Studio exposes an OpenAI-compatible local endpoint. Start its local server, then configure:
 
 ```text
 Provider: openai
-Model: ชื่อโมเดลที่โหลดอยู่ใน LM Studio
+Model: the model loaded in LM Studio
 API Base URL: http://localhost:1234/v1
 API Key: lm-studio
 ```
 
-ในหน้า Settings ของเว็บมีช่อง API Base URL สำหรับ endpoint ที่เข้ากันได้กับ OpenAI
+The web Settings panel includes an API Base URL field for OpenAI-compatible endpoints.
 
-## เว็บแอปพลิเคชัน
+## Web application
 
 ```bash
 python -m wikirag serve --host 127.0.0.1 --port 8000
 ```
 
-เปิดเว็บที่ [http://localhost:8000](http://localhost:8000)
+Open [http://localhost:8000](http://localhost:8000).
 
-เว็บแอปรองรับการแชทแบบ streaming, ปุ่มหยุด/ยกเลิก, แก้ไข/คัดลอก/สร้างคำตอบใหม่, ประวัติแชทถาวร, การตั้งค่าที่ไม่ใช่ความลับ, การเลือก provider, การดูแหล่งข้อมูลที่ค้นพบ, สำรวจตัวละคร, โครงข่ายความสัมพันธ์ที่อัปเดตอัตโนมัติ และแดชบอร์ดสถานะการนำเข้า/สร้าง Embedding
+The web application includes streaming chat with stop/cancel, edit/copy/regenerate actions, persistent local chat history, non-secret settings, provider selection, retrieved-source transparency, entity browsing, an auto-refreshing knowledge graph, and an ingestion/embedding status dashboard.
 
-ประวัติแชทจะถูกเก็บไว้ในเครื่องที่ `data/tensura/chat_history.db` และไม่ควร commit ขึ้น repository สาธารณะ
+Chat history is stored locally at `data/tensura/chat_history.db` and should not be committed to a public repository.
 
-## การประเมินผลและการทดสอบ
+## Evaluation and tests
 
-ชุดข้อมูลประเมินผลอยู่ที่ `eval/golden_qa.json`:
+The evaluation dataset is in `eval/golden_qa.json`:
 
 ```bash
 python -m pytest -q
@@ -154,31 +164,31 @@ wikirag eval --project tensura --golden eval/golden_qa.json
 
 ## Docker
 
-ไฟล์ Docker ที่ให้มาจะรัน FastAPI service พร้อม container ของ Ollama:
+The included Docker setup runs the FastAPI service with an Ollama container:
 
 ```bash
 docker compose up --build
 ```
 
-โปรเจกต์ Tensura ใช้ OpenRouter เป็นค่าเริ่มต้น ดังนั้นให้กำหนด API key หรือเปลี่ยน provider ของ LLM ก่อนใช้งานผ่าน Docker
+The default Tensura project uses OpenRouter, so configure its API key or change the project LLM provider when using Docker.
 
-## สถาปัตยกรรม
+## Architecture
 
 ```text
-หน้า MediaWiki ดิบ
-  → MediaWikiConnector พร้อม checkpoint และ incremental sync
+Raw MediaWiki pages
+  → MediaWikiConnector with checkpointing and incremental sync
   → WikitextParser + InfoboxExtractor
-  → SectionAwareChunker พร้อม contextual headers
-  → gpahal/bge-m3-onnx-int8 ผ่าน ONNX Runtime
+  → SectionAwareChunker with contextual headers
+  → gpahal/bge-m3-onnx-int8 via ONNX Runtime
   → LanceDB vector store
-  → QueryPreprocessor และ RetrievalPipeline
+  → QueryPreprocessor and RetrievalPipeline
   → GroundedAnswerGenerator
   → OpenRouter/Ollama/LM Studio/Gemini/OpenAI/Anthropic
 ```
 
-## นโยบาย Repository และข้อมูล
+## Repository and data policy
 
-ข้อมูลที่สร้างขึ้นควรเก็บไว้ในเครื่องและไม่ควร commit:
+Generated data should normally stay local and should not be committed:
 
 ```text
 data/tensura/raw/
@@ -189,12 +199,12 @@ data/tensura/chat_history.db
 data/tensura/graph.db
 ```
 
-สำหรับ repository สาธารณะ ควรเผยแพร่เฉพาะ source code, การตั้งค่าโปรเจกต์, เอกสาร, tests และ fixture ตัวอย่างขนาดเล็ก ห้ามเผยแพร่ API key, ประวัติแชทส่วนตัว, log ส่วนตัว หรือดัชนีข้อมูลขนาดใหญ่
+For a public repository, publish source code, project configuration, documentation, tests, and small synthetic/sample fixtures. Do not publish API keys, personal chat history, private logs, or large generated indexes.
 
-## License และการแสดงที่มา
+## License and attribution
 
-โค้ดของ WikiRAG ตั้งใจให้ใช้สัญญาอนุญาต MIT ควรเพิ่มไฟล์ `LICENSE` ที่เหมาะสมก่อนเผยแพร่
+The WikiRAG application code is intended to use the MIT license. Add the appropriate `LICENSE` file before publishing.
 
-เนื้อหาที่ดัดแปลงจาก [Tensura Wiki](https://tensura.fandom.com) เผยแพร่ภายใต้ **Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)** คำตอบที่สร้างขึ้นจะแสดงที่มาโดยอัตโนมัติ หากแจกจ่ายเนื้อหาที่ดัดแปลงควรเพิ่มไฟล์ `NOTICE.md` ที่ระบุที่มาอย่างชัดเจน
+Content derived from the [Tensura Wiki](https://tensura.fandom.com) is distributed under the **Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)** license. Generated answers include attribution automatically. Include a clear `NOTICE.md` when redistributing derived content.
 
-โมเดล Embedding คือ [gpahal/bge-m3-onnx-int8](https://huggingface.co/gpahal/bge-m3-onnx-int8) ซึ่ง model card ระบุสัญญาอนุญาต MIT ส่วนโมเดลต้นฉบับคือ [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) หากแจกจ่ายไฟล์โมเดล ต้องเก็บประกาศและเงื่อนไข license ที่เกี่ยวข้องไว้ด้วย
+The embedding model is [gpahal/bge-m3-onnx-int8](https://huggingface.co/gpahal/bge-m3-onnx-int8), whose model card identifies an MIT license. The base model is [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3). Preserve the applicable model license notices when distributing model files.

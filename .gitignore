@@ -1,33 +1,14 @@
-# Secrets and local configuration
 .env
-.env.*
-!.env.example
-
-# Generated knowledge data and local model files
-data/
-models/
-*.db
-*.sqlite3
-*.sqlite3-journal
-*.lance/
-
-# Python artifacts
+.venv/
 __pycache__/
 *.py[cod]
-*.pyo
-*.egg-info/
 .pytest_cache/
-.mypy_cache/
-
-# Local tooling and OS files
-.venv/
-venv/
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-# Logs and temporary files
+data/tensura/raw/
+data/tensura/parsed/
+data/tensura/embeddings/
+data/tensura/vectordb/
+data/tensura/chat_history.db
+data/tensura/graph.db
+data/tensura/backups/
+models/
 *.log
-*.tmp
-*.bak
