@@ -35,3 +35,14 @@ Download [gpahal/bge-m3-onnx-int8](https://huggingface.co/gpahal/bge-m3-onnx-int
 ## License and attribution
 
 Application code: MIT. Derived Tensura Wiki content: CC BY-SA 3.0. See [NOTICE.md](NOTICE.md) and [LICENSE](LICENSE).
+## Optional API protection
+
+For deployments outside the local machine, enable API protection in `.env`:
+
+```env
+WIKIRAG_PROTECT_API=1
+WIKIRAG_API_TOKEN=replace-with-a-long-random-token
+WIKIRAG_CORS_ORIGINS=https://your-frontend.example
+```
+
+Clients must send the token in the `X-WikiRAG-API-Token` header. This is a deployment safeguard, not a full user-login system; keep the server behind HTTPS and never commit `.env`.

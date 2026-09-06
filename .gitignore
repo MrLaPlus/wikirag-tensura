@@ -9,6 +9,8 @@ data/tensura/embeddings/
 data/tensura/vectordb/
 data/tensura/chat_history.db
 data/tensura/graph.db
+data/tensura/structured.db
+data/tensura/timeline.db
 data/tensura/backups/
 models/
 *.log

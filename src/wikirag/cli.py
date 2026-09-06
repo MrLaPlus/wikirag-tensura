@@ -406,7 +406,19 @@ def serve(
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload for development"),
 ):
     """Starts the WikiRAG FastAPI backend server (supports SSE streaming & Web UI)."""
+    import socket
     import uvicorn
+
+    # Give a clear, harmless result when the launcher is run twice. Uvicorn's
+    # low-level WinSock error is otherwise easy to misread as an app failure.
+    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.5)
+        if probe.connect_ex((probe_host, port)) == 0:
+            console.print(f"[yellow]WikiRAG is already running at http://localhost:{port}[/yellow]")
+            console.print("[cyan]No second server was started. Use the existing browser tab or open the URL above.[/cyan]")
+            return
+
     console.print(f"[bold green]Starting WikiRAG API Server at http://{host}:{port}...[/bold green]")
     console.print(f"[cyan]API Documentation available at: http://localhost:{port}/docs[/cyan]")
     uvicorn.run("wikirag.api.app:app", host=host, port=port, reload=reload)

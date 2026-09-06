@@ -132,7 +132,7 @@ class SQLiteEntityGraph:
                 aliases=json.loads(row[4] or "[]"),
             )
 
-    def get_subgraph(self, entity_id: str, max_depth: int = 2, max_nodes: int = 40) -> GraphSubgraph:
+    def get_subgraph(self, entity_id: str, max_depth: int = 2, max_nodes: int = 40, relation_type: Optional[str] = None) -> GraphSubgraph:
         """Performs BFS graph traversal up to max_depth starting from entity_id."""
         visited_nodes: Set[str] = {entity_id}
         queue = deque([(entity_id, 0)])
@@ -148,14 +148,12 @@ class SQLiteEntityGraph:
                     continue
 
                 # Query outgoing and incoming edges
+                relation_sql = " AND relation_type = ?" if relation_type else ""
+                params = (curr_node, curr_node, relation_type) if relation_type else (curr_node, curr_node)
                 cursor.execute(
-                    """
-                    SELECT id, source, target, relation_type, confidence, source_chunk_id, properties_json
-                    FROM relationships
-                    WHERE source = ? OR target = ?
-                    LIMIT 30
-                    """,
-                    (curr_node, curr_node),
+                    f"""SELECT id, source, target, relation_type, confidence, source_chunk_id, properties_json
+                    FROM relationships WHERE (source = ? OR target = ?){relation_sql} LIMIT 30""",
+                    params,
                 )
                 rows = cursor.fetchall()
 
@@ -256,18 +254,26 @@ class SQLiteEntityGraph:
 
         return []
 
-    def get_overview_graph(self, limit_nodes: int = 50) -> GraphSubgraph:
+    def get_overview_graph(self, limit_nodes: int = 50, entity_type: Optional[str] = None, relation_type: Optional[str] = None) -> GraphSubgraph:
         """Returns the top connected subgraph for overall platform visualization."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             # Fetch entities with most relationships
+            type_sql = " WHERE entity_type = ?" if entity_type else ""
+            type_params = (entity_type, limit_nodes) if entity_type else (limit_nodes,)
             cursor.execute(
-                """
-                SELECT id, name, entity_type, attributes_json, aliases_json
-                FROM entities
-                LIMIT ?
-                """,
-                (limit_nodes,),
+                f"""SELECT e.id, e.name, e.entity_type, e.attributes_json, e.aliases_json
+                FROM entities e
+                LEFT JOIN (
+                    SELECT source AS entity_id FROM relationships
+                    UNION ALL
+                    SELECT target AS entity_id FROM relationships
+                ) degree ON degree.entity_id = e.id
+                {type_sql}
+                GROUP BY e.id, e.name, e.entity_type, e.attributes_json, e.aliases_json
+                ORDER BY COUNT(degree.entity_id) DESC, e.name COLLATE NOCASE
+                LIMIT ?""",
+                type_params,
             )
             node_rows = cursor.fetchall()
             node_ids = {r[0] for r in node_rows}
@@ -286,14 +292,17 @@ class SQLiteEntityGraph:
                 return GraphSubgraph(nodes=[], edges=[])
 
             placeholders = ",".join("?" for _ in node_ids)
+            relation_sql = " AND relation_type = ?" if relation_type else ""
+            relation_params = list(node_ids) + list(node_ids) + ([relation_type] if relation_type else [])
             cursor.execute(
                 f"""
                 SELECT id, source, target, relation_type, confidence, source_chunk_id, properties_json
                 FROM relationships
                 WHERE source IN ({placeholders}) AND target IN ({placeholders})
+                {relation_sql}
                 LIMIT 100
                 """,
-                list(node_ids) + list(node_ids),
+                relation_params,
             )
             edges = [
                 RelationshipEdge(

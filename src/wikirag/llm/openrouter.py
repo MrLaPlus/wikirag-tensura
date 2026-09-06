@@ -68,7 +68,8 @@ class OpenRouterProvider(BaseLLMProvider):
             "max_tokens": max_tokens,
         }
 
-        with httpx.Client(timeout=60.0) as client:
+        timeout = float(os.getenv("WIKIRAG_LLM_TIMEOUT_SECONDS", "120"))
+        with httpx.Client(timeout=timeout) as client:
             data = None
             for attempt in range(3 if self.retry_enabled else 1):
                 resp = client.post(f"{self.base_url}/chat/completions", headers=self._get_headers(), json=payload)
@@ -109,7 +110,8 @@ class OpenRouterProvider(BaseLLMProvider):
             "stream": True,
         }
 
-        with httpx.Client(timeout=60.0) as client:
+        timeout = float(os.getenv("WIKIRAG_LLM_TIMEOUT_SECONDS", "120"))
+        with httpx.Client(timeout=timeout) as client:
             for attempt in range(3 if self.retry_enabled else 1):
                 with client.stream("POST", f"{self.base_url}/chat/completions", headers=self._get_headers(), json=payload) as response:
                     if response.status_code in (429, 502, 503, 504) and self.retry_enabled and attempt < 2:

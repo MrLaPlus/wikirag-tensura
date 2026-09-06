@@ -245,7 +245,7 @@
       const [settings, setSettings] = useState(() => {
         const saved = localStorage.getItem('wikirag_settings');
         if (saved) {
-          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: false, enableRetry: parsed.enableRetry !== false, verificationMode: parsed.verificationMode || 'off', verificationStrictness: parsed.verificationStrictness || 'balanced',
+          try { const parsed = JSON.parse(saved); return {...parsed, enableReranking: parsed.enableReranking === true, enableRetry: parsed.enableRetry !== false, verificationMode: parsed.verificationMode || 'off', verificationStrictness: parsed.verificationStrictness || 'balanced',
             embeddingModel: parsed.embeddingModel || 'BAAI/bge-m3', embeddingDevice: parsed.embeddingDevice || 'cpu', embeddingBatchSize: parsed.embeddingBatchSize || 8,
             rerankerModel: parsed.rerankerModel || 'BAAI/bge-reranker-v2-m3', chunkMinTokens: parsed.chunkMinTokens || 400, chunkMaxTokens: parsed.chunkMaxTokens || 800,
             chunkOverlap: parsed.chunkOverlap ?? 15, crawlerBatchSize: parsed.crawlerBatchSize || 50, crawlerDelay: parsed.crawlerDelay ?? 0.5,
@@ -319,7 +319,7 @@
           if (!res.ok) throw new Error('Failed to load conversation');
           const data = await res.json();
           setConversationId(data.id);
-          setMessages((data.messages || []).map(m => ({role: m.role, content: m.content, sources: m.citations || []})));
+          setMessages((data.messages || []).map(m => ({id: m.id, role: m.role, content: m.content, sources: m.citations || [], verification: m.verification && Object.keys(m.verification).length ? m.verification : undefined, revisedAnswer: m.verification?.suggested_answer || ''})));
           setActiveSources([]);
           setTab('chat');
         } catch (e) { console.error(e); }
@@ -484,11 +484,13 @@
       const [graphSearch, setGraphSearch] = useState('');
       const [graphViewReset, setGraphViewReset] = useState(0);
       const [selectedRelationship, setSelectedRelationship] = useState(null);
-      const [graphShowLabels, setGraphShowLabels] = useState(true);
-      const [graphLimit, setGraphLimit] = useState(120);
+      const [graphShowLabels, setGraphShowLabels] = useState(false);
+      const [graphLimit, setGraphLimit] = useState(60);
       const [graphHover, setGraphHover] = useState(null);
       const graphHoverRef = useRef(null);
       const [adminLogs, setAdminLogs] = useState([]);
+      const [evaluation, setEvaluation] = useState(null);
+      const [evaluationLoading, setEvaluationLoading] = useState(false);
       const canvasRef = useRef(null);
 
       const t = I18N[lang];
@@ -533,7 +535,7 @@
         fetchEntities();
         fetchConversations();
         fetch('/api/settings?project=tensura').then(r => r.ok ? r.json() : {}).then(saved => {
-          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: false, enableRetry: saved.enableRetry !== false, verificationMode: saved.verificationMode || 'off', verificationStrictness: saved.verificationStrictness || 'balanced'}));
+          if (Object.keys(saved).length) setSettings(prev => ({...prev, ...saved, enableReranking: saved.enableReranking === true, enableRetry: saved.enableRetry !== false, verificationMode: saved.verificationMode || 'off', verificationStrictness: saved.verificationStrictness || 'balanced'}));
         }).catch(() => {});
       }, []);
 
@@ -606,6 +608,11 @@
         const categoryText = (entity.categories || []).join(' ').toLowerCase();
         const nameText = (entity.entity || '').toLowerCase();
         const info = entity.infobox || {};
+        if (entity.entity_type === 'skill') return 'skills';
+        if (entity.entity_type === 'equipment') return 'equipment';
+        if (entity.entity_type === 'race') return 'races';
+        if (entity.entity_type === 'location') return 'locations';
+        if (entity.entity_type === 'character') return 'characters';
         if (/skill|magic|spell|ability|สกิล|เวทมนตร์/.test(categoryText + ' ' + nameText)) return 'skills';
         if (/weapon|equipment|item|sword|armor|อาวุธ|อุปกรณ์|ไอเทม/.test(categoryText + ' ' + nameText)) return 'equipment';
         if (/race|species|เผ่าพันธุ์|เผ่า/.test(categoryText)) return 'races';
@@ -615,7 +622,7 @@
       };
 
       const getRankScore = (entity) => {
-        const rank = String(entity.infobox?.rank || '').toLowerCase();
+        const rank = String(entity.rank || entity.infobox?.rank || '').toLowerCase();
         if (!rank) return -1;
         const rankOrder = [
           ['god', 1000], ['divine', 950], ['ultimate', 900], ['true dragon', 850],
@@ -633,11 +640,11 @@
       const filteredEntities = entities
         .filter(e => e.entity.toLowerCase().includes(searchEntityText.toLowerCase()))
         .filter(e => entityGroup === 'all' || getEntityGroup(e) === entityGroup)
-        .filter(e => entityMatches(e, e.infobox?.species, entitySpeciesFilter))
-        .filter(e => entityMatches(e, e.infobox?.rank, entityRankFilter))
-        .filter(e => !entityMissingRankOnly || !e.infobox?.rank)
-        .filter(e => entityMatches(e, e.infobox?.status, entityStatusFilter))
-        .filter(e => entityMatches(e, (e.infobox?.affiliation || []).join(' '), entityAffiliationFilter))
+        .filter(e => entityMatches(e, e.species || e.infobox?.species, entitySpeciesFilter))
+        .filter(e => entityMatches(e, e.rank || e.infobox?.rank, entityRankFilter))
+        .filter(e => !entityMissingRankOnly || !(e.rank || e.infobox?.rank))
+        .filter(e => entityMatches(e, e.status || e.infobox?.status, entityStatusFilter))
+        .filter(e => entityMatches(e, (e.affiliation || e.infobox?.affiliation || []).join(' '), entityAffiliationFilter))
         .sort((a, b) => {
           if (entitySort === 'rank-desc' || entitySort === 'rank-asc') {
             const rankCompare = getRankScore(b) - getRankScore(a);
@@ -652,17 +659,17 @@
         });
 
       const entityFilterOptions = (field) => [...new Set(entities.flatMap(e => {
-        const value = e.infobox?.[field];
+        const value = e[field] ?? e.infobox?.[field];
         return Array.isArray(value) ? value : value ? [value] : [];
       }).map(String).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
       const exportEntities = (format) => {
         const rows = filteredEntities.map(e => ({
           entity: e.entity,
-          species: e.infobox?.species || '',
-          rank: e.infobox?.rank || '',
-          status: e.infobox?.status || '',
-          affiliation: e.infobox?.affiliation || [],
+          species: e.species || e.infobox?.species || '',
+          rank: e.rank || e.infobox?.rank || '',
+          status: e.status || e.infobox?.status || '',
+          affiliation: e.affiliation || e.infobox?.affiliation || [],
           categories: e.categories || [],
           canonical_url: e.canonical_url || '',
         }));
@@ -713,6 +720,7 @@
 
       const cancelAdminTask = async () => { await fetch('/api/admin/cancel', {method: 'POST'}); fetchAdminStatus(); };
       const restoreLatestBackup = async () => { const r = await fetch('/api/admin/backups'); const data = r.ok ? await r.json() : {backups: []}; const latest = data.backups?.[0]; if (!latest) return alert('ยังไม่มี Backup'); if (!confirm(`กู้คืน ${latest} หรือไม่?`)) return; const restore = await fetch(`/api/admin/restore?filename=${encodeURIComponent(latest)}`, {method: 'POST'}); alert(restore.ok ? 'กู้คืน Backup แล้ว กรุณารีสตาร์ตเซิร์ฟเวอร์' : 'กู้คืนไม่สำเร็จ'); };
+      const runEvaluation = async () => { setEvaluationLoading(true); try { const r = await fetch(`/api/evaluation?top_k=${Number(settings.topK) || 5}`); let data = r.ok ? await r.json() : {ok: false}; while (data.job_id && ['queued','running'].includes(data.status)) { await new Promise(resolve => setTimeout(resolve, 1000)); const status = await fetch(`/api/evaluation/${encodeURIComponent(data.job_id)}`); data = status.ok ? await status.json() : {ok: false}; } setEvaluation(data); } finally { setEvaluationLoading(false); } };
       const exportGraph = (format) => {
         const data = format === 'json' ? JSON.stringify(visibleGraphData, null, 2) : JSON.stringify(visibleGraphData);
         if (format === 'png') {
@@ -953,11 +961,11 @@
         };
       }, [tab, visibleGraphData, graphSearch, darkMode, graphViewReset, graphShowLabels]);
 
-      const verifyAnswer = async (query, answer, sources) => {
+        const verifyAnswer = async (query, answer, sources, messageId) => {
         if (!answer || settings.verificationMode === 'off') return;
         setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? {...m, verification: {status: 'running'}} : m));
         try {
-          const res = await fetch('/api/chat/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query, answer, sources, project: 'tensura', llm_provider: settings.provider, llm_model: settings.model, api_key: settings.apiKey || undefined, base_url: settings.baseUrl || undefined, verification_strictness: settings.verificationStrictness, verify_numbers: settings.verifyNumbers, verify_names: settings.verifyNames, verify_skill_ranks: settings.verifySkillRanks, verify_relationships: settings.verifyRelationships, verify_citations: settings.verifyCitations, verify_unsupported: settings.verifyUnsupported})});
+          const res = await fetch('/api/chat/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query, answer, sources, message_id: messageId, conversation_id: conversationId, project: 'tensura', llm_provider: settings.provider, llm_model: settings.model, api_key: settings.apiKey || undefined, base_url: settings.baseUrl || undefined, verification_strictness: settings.verificationStrictness, verify_numbers: settings.verifyNumbers, verify_names: settings.verifyNames, verify_skill_ranks: settings.verifySkillRanks, verify_relationships: settings.verifyRelationships, verify_citations: settings.verifyCitations, verify_unsupported: settings.verifyUnsupported})});
           const result = res.ok ? await res.json() : {overall: 'insufficient_evidence', summary: 'Verification failed'};
           setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? {...m, verification: result, revisedAnswer: settings.verificationMode !== 'verify_only' ? result.suggested_answer : ''} : m));
         } catch (error) { setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? {...m, verification: {overall: 'insufficient_evidence', summary: error.message}} : m)); }
@@ -982,6 +990,7 @@
         const startedAt = performance.now();
         let streamedText = '';
         let currentSources = [];
+        let savedMessageId = null;
         setChatMetrics({status: 'running'});
 
         setMessages(prev => [...prev, { role: 'assistant', content: '', sources: [] }]);
@@ -1068,6 +1077,8 @@
                 } catch (err) {
                   console.error("Token parse error", err);
                 }
+              } else if (eventType === 'message_saved') {
+                try { savedMessageId = JSON.parse(eventData).id; } catch (err) {}
               } else if (eventType === 'error') {
                 try {
                   const errObj = JSON.parse(eventData);
@@ -1080,7 +1091,7 @@
               }
             }
           }
-          if (streamedText && settings.verificationMode !== 'off') verifyAnswer(userMsg, streamedText, currentSources);
+          if (streamedText && settings.verificationMode !== 'off') verifyAnswer(userMsg, streamedText, currentSources, savedMessageId);
         } catch (error) {
           if (error.name === 'AbortError') {
             setMessages(prev => {
@@ -1507,12 +1518,14 @@
                         <div key={idx} className="bg-surface-card dark:bg-surface-dark-soft border border-hairline dark:border-surface-dark-elevated rounded-lg p-6 flex flex-col justify-between hover:border-primary/50 transition">
                           <div>
                             <h3 className="font-display text-2xl font-normal text-ink dark:text-on-dark tracking-tight">{ent.entity}</h3>
-                            {ent.infobox?.species && (
-                              <p className="text-xs font-mono uppercase tracking-wider text-primary mt-1">{ent.infobox.species}</p>
+                            {(ent.species || ent.infobox?.species) && (
+                              <p className="text-xs font-mono uppercase tracking-wider text-primary mt-1">{ent.species || ent.infobox.species}</p>
                             )}
-                            {ent.infobox?.rank && (
-                              <p className="text-xs text-muted dark:text-on-dark-soft mt-2"><span className="font-medium">{lang === 'th' ? 'ระดับ' : 'Rank'}:</span> {ent.infobox.rank}</p>
+                            {(ent.rank || ent.infobox?.rank) && (
+                              <p className="text-xs text-muted dark:text-on-dark-soft mt-2"><span className="font-medium">{lang === 'th' ? 'ระดับ' : 'Rank'}:</span> {ent.rank || ent.infobox.rank}</p>
                             )}
+                            {ent.status && <p className="text-xs text-muted dark:text-on-dark-soft mt-1"><span className="font-medium">Status:</span> {ent.status}</p>}
+                            {ent.skills?.length > 0 && <p className="text-xs text-muted dark:text-on-dark-soft mt-1 truncate"><span className="font-medium">{lang === 'th' ? 'สกิล' : 'Skills'}:</span> {ent.skills.slice(0, 3).join(', ')}</p>}
                             <div className="flex flex-wrap gap-1.5 mt-3 mb-4">
                               {ent.categories.slice(0, 3).map((c, ci) => (
                                 <span key={ci} className="text-[11px] bg-canvas dark:bg-surface-dark border border-hairline dark:border-surface-dark-elevated text-muted dark:text-on-dark-soft px-2 py-0.5 rounded-full font-medium">
@@ -1755,7 +1768,7 @@
                     )}
                     <div className="mt-4 border-t border-hairline dark:border-surface-dark-elevated pt-3">
                       <div className="text-[10px] font-mono uppercase tracking-widest text-primary mb-2">Live log</div>
-                      <div className="max-h-32 overflow-y-auto bg-surface-dark text-[10px] font-mono rounded-md p-2 space-y-1">{adminLogs.slice(-30).map((log, i) => <div key={i} className={log.level === 'error' ? 'text-red-300' : log.level === 'warning' ? 'text-yellow-300' : 'text-on-dark-soft'}>[{log.time}] {log.message}</div>)}</div>
+                      <div className="max-h-32 overflow-y-auto bg-surface-dark text-[10px] font-mono rounded-md p-2 space-y-1">{adminLogs.length ? adminLogs.slice(-30).map((log, i) => <div key={i} className={log.level === 'error' ? 'text-red-300' : log.level === 'warning' ? 'text-yellow-300' : 'text-on-dark-soft'}>[{log.time}] {log.message}</div>) : <div className="text-on-dark-soft/70">ยังไม่มีรายการ Log — เมื่อเริ่ม Sync, Embedding หรือ Backup จะแสดงที่นี่</div>}</div>
                     </div>
                   </div>
                 </div>
@@ -1791,10 +1804,12 @@
                     {adminStats.is_syncing && <button onClick={cancelAdminTask} className="bg-red-500 text-white text-xs font-medium px-5 py-2.5 rounded-md transition flex items-center gap-2"><i className="fa-solid fa-stop"></i><span>หยุดงาน</span></button>}
                     <button onClick={async () => { const r = await fetch('/api/admin/backup', {method: 'POST'}); if (r.ok) alert('สร้าง Backup แล้ว'); }} className="border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary text-xs px-4 py-2.5 rounded-md"><i className="fa-solid fa-box-archive mr-1"></i>Backup</button>
                     <button onClick={restoreLatestBackup} className="border border-hairline dark:border-surface-dark-elevated text-muted hover:text-primary text-xs px-4 py-2.5 rounded-md"><i className="fa-solid fa-clock-rotate-left mr-1"></i>Restore ล่าสุด</button>
+                    <button onClick={runEvaluation} disabled={evaluationLoading} className="border border-primary text-primary hover:bg-primary hover:text-white text-xs px-4 py-2.5 rounded-md"><i className="fa-solid fa-chart-line mr-1"></i>{evaluationLoading ? 'กำลังวัดผล...' : 'Run Evaluation'}</button>
                   </div>
                   <p className="text-xs text-muted dark:text-on-dark-soft">
                     * <strong>{t.syncNow}</strong>: ดึงเฉพาะหน้าที่อัปเดต | <strong>{t.syncFull}</strong>: ดึงทั้งหมดตั้งแต่ต้น | <strong>{t.embedOnly}</strong>: แปลงเวกเตอร์บันทึกเข้า LanceDB ทันที
                   </p>
+                  {evaluation?.metrics && <div className="border-t border-hairline dark:border-surface-dark-elevated pt-3 mt-3 text-xs"><div className="font-mono uppercase tracking-widest text-primary mb-2">Evaluation · golden_qa.json</div><div className="grid grid-cols-2 md:grid-cols-4 gap-2"><div>Hybrid Hit@1 <b>{(evaluation.metrics.hit_rate_1 * 100).toFixed(1)}%</b></div><div>Hybrid Hit@{settings.topK} <b>{(evaluation.metrics[`hit_rate_${settings.topK}`] * 100).toFixed(1)}%</b></div><div>Hybrid MRR <b>{evaluation.metrics.mrr.toFixed(3)}</b></div><div>Context Recall <b>{((evaluation.metrics.context_keyword_recall || 0) * 100).toFixed(1)}%</b></div></div>{evaluation.metrics.comparison && <div className="mt-2 text-muted dark:text-on-dark-soft">Dense → Hybrid MRR: {(evaluation.metrics.comparison.dense.mrr || 0).toFixed(3)} → {(evaluation.metrics.comparison.hybrid.mrr || 0).toFixed(3)}</div>}<div className="mt-1 text-muted dark:text-on-dark-soft">ยังไม่ได้วัดคุณภาพคำตอบ LLM และการแต่งข้อมูล</div></div>}
                 </div>
 
               </div>
@@ -2046,12 +2061,12 @@
                     <span className="font-medium text-ink dark:text-on-dark">{t.enableRerank}</span>
                     <input 
                       type="checkbox" 
-                      checked={false} 
-                      disabled={true}
+                      checked={settings.enableReranking === true}
                       onChange={(e) => setSettings({...settings, enableReranking: e.target.checked})}
                       className="rounded accent-primary"
                     />
                    </div>
+                   <p className="text-[10px] text-muted dark:text-on-dark-soft">Reranker ใช้ RAM สูงมาก (โมเดลประมาณ 2.27 GB) ค่าเริ่มต้นปิด และต้องตั้งค่า WIKIRAG_ALLOW_LARGE_RERANKER=1 ก่อนเปิดใช้งาน</p>
 
                    <div className="border-b border-hairline dark:border-surface-dark-elevated pb-2 pt-1">
                      <div className="text-[10px] font-mono uppercase tracking-widest text-primary">03 · Embedding Runtime</div>

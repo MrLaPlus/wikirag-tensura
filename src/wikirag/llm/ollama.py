@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Iterator, Optional
 import httpx
 from wikirag.llm.base import BaseLLMProvider, LLMResponse
@@ -34,7 +35,8 @@ class OllamaProvider(BaseLLMProvider):
                 "num_predict": max_tokens,
             },
         }
-        with httpx.Client(base_url=self.base_url, timeout=120.0) as client:
+        timeout = float(os.getenv("WIKIRAG_LLM_TIMEOUT_SECONDS", "180"))
+        with httpx.Client(base_url=self.base_url, timeout=timeout) as client:
             resp = client.post("/api/generate", json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -63,7 +65,8 @@ class OllamaProvider(BaseLLMProvider):
                 "num_predict": max_tokens,
             },
         }
-        with httpx.Client(base_url=self.base_url, timeout=120.0) as client:
+        timeout = float(os.getenv("WIKIRAG_LLM_TIMEOUT_SECONDS", "180"))
+        with httpx.Client(base_url=self.base_url, timeout=timeout) as client:
             with client.stream("POST", "/api/generate", json=payload) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():

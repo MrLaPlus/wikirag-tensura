@@ -6,12 +6,15 @@ import gc
 import threading
 import time
 import shutil
+import tempfile
 import zipfile
+import uuid
+from urllib.parse import quote
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from wikirag.api.models import (
@@ -37,6 +40,9 @@ from wikirag.parser.wikitext import WikitextParser
 from wikirag.retrieval.pipeline import RetrievalPipeline
 from wikirag.utils.logging import get_logger
 from wikirag.vectorstore.lancedb_store import LanceDBStore
+from wikirag.structured.store import StructuredKnowledgeStore
+from wikirag.timeline.store import TimelineStore
+from wikirag.quality import audit_rows
 
 logger = get_logger(__name__)
 
@@ -55,6 +61,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def optional_api_token(request: Request, call_next):
+    """Optional defense for deployments beyond localhost; disabled by default."""
+    token = os.getenv("WIKIRAG_API_TOKEN", "").strip()
+    protected = os.getenv("WIKIRAG_PROTECT_API", "0") == "1"
+    exempt = {"/", "/docs", "/openapi.json", "/api/health"}
+    if protected and token and request.url.path.startswith("/api/") and request.url.path not in exempt:
+        supplied = request.headers.get("X-WikiRAG-API-Token", "")
+        if supplied != token:
+            return JSONResponse(status_code=401, content={"detail": "API token required"})
+    return await call_next(request)
 
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -85,6 +104,72 @@ _SYNC_STATUS = {
     "current_item": None,
 }
 _SYNC_LOGS: List[Dict[str, Any]] = []
+_EVAL_JOBS: Dict[str, Dict[str, Any]] = {}
+_STRUCTURED_CACHE: Dict[str, StructuredKnowledgeStore] = {}
+_TIMELINE_CACHE: Dict[str, TimelineStore] = {}
+
+
+def _process_memory_mb() -> Optional[float]:
+    """Return process RSS consistently on Windows, macOS and Linux."""
+    try:
+        import psutil
+        return round(psutil.Process(os.getpid()).memory_info().rss / (1024 ** 2), 1)
+    except ImportError:
+        pass
+    except Exception:
+        return None
+    if os.name != "nt":
+        try:
+            return round(__import__("resource").getrusage(__import__("resource").RUSAGE_SELF).ru_maxrss / 1024, 1)
+        except Exception:
+            pass
+    return None
+
+
+def get_structured_store(project: str = "tensura") -> StructuredKnowledgeStore:
+    cfg = load_project_config(project)
+    store = _STRUCTURED_CACHE.get(project)
+    if store is None:
+        store = StructuredKnowledgeStore(str(Path(cfg.storage.data_dir) / "structured.db"))
+        _STRUCTURED_CACHE[project] = store
+    return store
+
+
+def _rebuild_structured_index(project: str) -> Dict[str, int]:
+    cfg = load_project_config(project)
+    source = LanceDBStore(db_path=cfg.storage.vectordb_dir, table_name=cfg.vectorstore.table_name)
+    result = get_structured_store(project).rebuild_from_rows(source.metadata_rows())
+    _sync_log(f"สร้าง Structured Knowledge สำเร็จ {result['entities']} entities")
+    return result
+
+
+def get_timeline_store(project: str = "tensura") -> TimelineStore:
+    cfg = load_project_config(project)
+    store = _TIMELINE_CACHE.get(project)
+    if store is None:
+        store = TimelineStore(str(Path(cfg.storage.data_dir) / "timeline.db"))
+        _TIMELINE_CACHE[project] = store
+    return store
+
+
+def _rebuild_timeline_index(project: str) -> Dict[str, int]:
+    cfg = load_project_config(project)
+    source = LanceDBStore(db_path=cfg.storage.vectordb_dir, table_name=cfg.vectorstore.table_name)
+    result = get_timeline_store(project).rebuild_from_rows(source.metadata_rows())
+    _sync_log(f"สร้าง Timeline สำเร็จ {result['events']} events")
+    return result
+
+
+def _graph_edges_with_sources(edges: List[Any], cfg: Any) -> List[Dict[str, Any]]:
+    """Expose a canonical page source even for legacy edges without chunk IDs."""
+    result = []
+    for edge in edges:
+        item = edge.model_dump()
+        source_url = f"{cfg.source.base_url.rstrip('/')}/{quote(str(edge.source).replace(' ', '_'))}"
+        item["source_url"] = source_url
+        item["evidence"] = "source_chunk" if edge.source_chunk_id else "entity_page"
+        result.append(item)
+    return result
 
 
 def _sync_log(message: str, level: str = "info"):
@@ -92,7 +177,14 @@ def _sync_log(message: str, level: str = "info"):
     entry = {"time": time.strftime("%H:%M:%S"), "level": level, "message": message}
     _SYNC_LOGS.append(entry)
     del _SYNC_LOGS[:-150]
-    logger.info(f"[admin] {message}") if level == "info" else logger.warning(f"[admin] {message}")
+    # Windows consoles using the legacy cp1252 code page cannot render Thai.
+    # Keep the original message for the API/UI, but use an ASCII-safe copy for
+    # the terminal logger so an informational log never emits a logging error.
+    console_message = message.encode("ascii", "replace").decode("ascii")
+    logger.info(f"[admin] {console_message}") if level == "info" else logger.warning(f"[admin] {console_message}")
+
+
+_sync_log("เซิร์ฟเวอร์พร้อมใช้งาน — รอคำสั่งจากผู้ใช้")
 
 
 def _cancelled() -> bool:
@@ -294,10 +386,61 @@ def verify_chat_answer(req: VerificationRequest):
         except json.JSONDecodeError:
             result = {"overall": "insufficient_evidence", "summary": raw[:1000], "issues": [], "suggested_answer": ""}
         result["raw"] = response.text
+        if req.message_id:
+            saved = _CHAT_HISTORY.update_message_verification(req.message_id, {
+                "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "model": req.llm_model or cfg.llm.default_model,
+                "provider": req.llm_provider or cfg.llm.default_provider,
+                "original_answer": req.answer,
+                **result,
+            })
+            result["persisted"] = saved
         return result
     except Exception as e:
         logger.warning("Answer verification failed: %s", str(e)[:300])
         raise HTTPException(status_code=502, detail="Answer verification failed")
+
+
+def _background_evaluation(job_id: str, project: str, top_k: int) -> None:
+    job = _EVAL_JOBS[job_id]
+    job["status"] = "running"
+    job["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        from wikirag.eval.runner import EvalRunner
+        runner = EvalRunner(str(_PROJECT_ROOT / "eval" / "golden_qa.json"))
+        result = runner.run_eval(get_pipeline(project), top_k=max(1, min(top_k, 96)))
+        job.update({"status": "completed", "metrics": result, "dataset": str(runner.golden_path)})
+    except Exception as exc:
+        logger.warning("Evaluation failed: %s", str(exc)[:300])
+        job.update({"status": "failed", "error": "Evaluation failed"})
+    finally:
+        job["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+@app.get("/api/evaluation")
+def run_evaluation(background_tasks: BackgroundTasks, project: str = "tensura", top_k: int = 5):
+    """Queue the golden retrieval benchmark without blocking the API worker."""
+    for job_id, job in reversed(list(_EVAL_JOBS.items())):
+        if job.get("project") == project and job.get("status") in {"queued", "running"}:
+            return {"ok": True, "status": job["status"], "job_id": job_id}
+    job_id = str(uuid.uuid4())
+    _EVAL_JOBS[job_id] = {
+        "job_id": job_id,
+        "project": project,
+        "top_k": max(1, min(top_k, 96)),
+        "status": "queued",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    background_tasks.add_task(_background_evaluation, job_id, project, max(1, min(top_k, 96)))
+    return {"ok": True, "status": "queued", "job_id": job_id}
+
+
+@app.get("/api/evaluation/{job_id}")
+def evaluation_status(job_id: str):
+    job = _EVAL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Evaluation job not found")
+    return job
 
 
 @app.get("/api/projects", response_model=List[ProjectInfo])
@@ -418,7 +561,8 @@ async def chat_stream(req: ChatRequest):
                     yield f"event: token\ndata: {payload}\n\n"
                     # Small async sleep to yield control to event loop
                     await asyncio.sleep(0.005)
-                _CHAT_HISTORY.add_message(conversation_id, "assistant", "".join(answer_parts), sources_data, chunks)
+                saved_message = _CHAT_HISTORY.add_message(conversation_id, "assistant", "".join(answer_parts), sources_data, chunks)
+                yield f"event: message_saved\ndata: {json.dumps({'id': saved_message['id']}, ensure_ascii=False)}\n\n"
             except Exception as err:
                 logger.warning("Primary LLM generation failed: %s", str(err)[:300])
                 fallback_error = None
@@ -439,7 +583,8 @@ async def chat_stream(req: ChatRequest):
                             answer_parts.append(token)
                             yield f"event: token\ndata: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
                             await asyncio.sleep(0.005)
-                        _CHAT_HISTORY.add_message(conversation_id, "assistant", "".join(answer_parts), sources_data, chunks)
+                        saved_message = _CHAT_HISTORY.add_message(conversation_id, "assistant", "".join(answer_parts), sources_data, chunks)
+                        yield f"event: message_saved\ndata: {json.dumps({'id': saved_message['id']}, ensure_ascii=False)}\n\n"
                         yield f"event: fallback\ndata: {json.dumps({'model': req.fallback_model}, ensure_ascii=False)}\n\n"
                     except Exception as fallback_err:
                         fallback_error = fallback_err
@@ -476,10 +621,111 @@ def get_entities(
     try:
         pipeline = get_pipeline(project)
         raw_cards = pipeline.vectorstore.get_entities(limit=limit, offset=offset, category=category)
-        return [EntityCard(**c) for c in raw_cards]
+        structured = get_structured_store(project)
+        if structured.count() == 0:
+            _rebuild_structured_index(project)
+        enriched = []
+        for card in raw_cards:
+            facts = structured.get(card.get("entity", "")) or {}
+            enriched.append({**card, **{key: facts.get(key) for key in ("entity_type", "species", "rank", "status", "affiliation", "skills", "equipment", "evolution")}})
+        return [EntityCard(**c) for c in enriched]
     except Exception as e:
         logger.error(f"Get entities error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/structured")
+def search_structured_knowledge(
+    query: str = "",
+    project: str = "tensura",
+    limit: int = 50,
+    offset: int = 0,
+    entity_type: Optional[str] = None,
+    rank: Optional[str] = None,
+):
+    """Search normalized facts without loading or changing the embedding model."""
+    try:
+        store = get_structured_store(project)
+        if store.count() == 0:
+            _rebuild_structured_index(project)
+        items = store.search(query=query, limit=limit, offset=offset, entity_type=entity_type, rank=rank)
+        return {"query": query, "count": store.count(), "items": items}
+    except Exception as exc:
+        logger.error("Structured search error: %s", exc)
+        raise HTTPException(status_code=500, detail="Structured search failed") from exc
+
+
+@app.post("/api/admin/structured/rebuild")
+def rebuild_structured_knowledge(project: str = "tensura"):
+    """Rebuild only structured.db from existing LanceDB metadata; embeddings stay untouched."""
+    if _SYNC_STATUS["is_syncing"]:
+        raise HTTPException(status_code=409, detail="Stop active crawl/embed jobs before rebuilding")
+    try:
+        result = _rebuild_structured_index(project)
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.error("Structured rebuild error: %s", exc)
+        raise HTTPException(status_code=500, detail="Structured index rebuild failed") from exc
+
+
+@app.get("/api/timeline")
+def search_timeline(
+    query: str = "",
+    project: str = "tensura",
+    entity: Optional[str] = None,
+    volume: Optional[int] = None,
+    chapter: Optional[int] = None,
+    relation: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Search timeline facts with a direct link back to the source chunk/page."""
+    try:
+        store = get_timeline_store(project)
+        if store.count() == 0:
+            _rebuild_timeline_index(project)
+        return {
+            "query": query,
+            "count": store.count(),
+            "items": store.search(query, entity, volume, chapter, relation, limit, offset),
+        }
+    except Exception as exc:
+        logger.error("Timeline search error: %s", exc)
+        raise HTTPException(status_code=500, detail="Timeline search failed") from exc
+
+
+@app.get("/api/admin/data-quality")
+def data_quality_report(project: str = "tensura"):
+    """Audit vector metadata and expose reproducibility versions."""
+    try:
+        cfg = load_project_config(project)
+        source = LanceDBStore(db_path=cfg.storage.vectordb_dir, table_name=cfg.vectorstore.table_name)
+        report = audit_rows(source.quality_rows())
+        state_path = Path(cfg.storage.state_file)
+        state_mtime = state_path.stat().st_mtime_ns if state_path.exists() else 0
+        report["data_version"] = f"{project}-{report['chunks']}-{state_mtime}"
+        report["embedding_version"] = {
+            "model": cfg.embedding.model_name,
+            "backend": cfg.embedding.backend,
+            "quantization": cfg.embedding.quantization,
+            "dimension": source.dimension,
+        }
+        return report
+    except Exception as exc:
+        logger.error("Data quality audit error: %s", exc)
+        raise HTTPException(status_code=500, detail="Data quality audit failed") from exc
+
+
+@app.post("/api/admin/timeline/rebuild")
+def rebuild_timeline(project: str = "tensura"):
+    """Rebuild only timeline.db from existing chunks; embeddings stay untouched."""
+    if _SYNC_STATUS["is_syncing"]:
+        raise HTTPException(status_code=409, detail="Stop active crawl/embed jobs before rebuilding")
+    try:
+        return {"ok": True, **_rebuild_timeline_index(project)}
+    except Exception as exc:
+        logger.error("Timeline rebuild error: %s", exc)
+        raise HTTPException(status_code=500, detail="Timeline rebuild failed") from exc
 
 
 @app.get("/api/entities/{entity_name}", response_model=EntityDetailResponse)
@@ -499,30 +745,40 @@ def get_entity_detail(entity_name: str, project: str = "tensura"):
 
 
 @app.get("/api/graph")
-def get_graph_overview(project: str = "tensura", limit: int = 40):
+def get_graph_overview(project: str = "tensura", limit: int = 40, entity_type: Optional[str] = None, relation_type: Optional[str] = None):
     """Returns top connected nodes and relational edges for global network graph."""
     from wikirag.graph.sqlite_graph import SQLiteEntityGraph
     cfg = load_project_config(project)
     graph_db = Path(cfg.storage.data_dir) / "graph.db"
     graph = SQLiteEntityGraph(str(graph_db))
-    subgraph = graph.get_overview_graph(limit_nodes=limit)
+    subgraph = graph.get_overview_graph(limit_nodes=max(1, min(limit, 500)), entity_type=entity_type, relation_type=relation_type)
     return {
         "nodes": [n.model_dump() for n in subgraph.nodes],
-        "edges": [e.model_dump() for e in subgraph.edges],
+        "edges": _graph_edges_with_sources(subgraph.edges, cfg),
     }
 
 
+@app.get("/api/graph/path")
+def get_graph_path(source: str, target: str, project: str = "tensura"):
+    """Find the shortest relationship path and return its evidence metadata."""
+    from wikirag.graph.sqlite_graph import SQLiteEntityGraph
+    cfg = load_project_config(project)
+    graph = SQLiteEntityGraph(str(Path(cfg.storage.data_dir) / "graph.db"))
+    edges = graph.find_shortest_path(source, target)
+    return {"source": source, "target": target, "found": bool(edges), "edges": _graph_edges_with_sources(edges, cfg)}
+
+
 @app.get("/api/graph/{entity_name}")
-def get_entity_subgraph(entity_name: str, project: str = "tensura", depth: int = 2):
+def get_entity_subgraph(entity_name: str, project: str = "tensura", depth: int = 2, relation_type: Optional[str] = None):
     """Returns 1-hop or 2-hop relational subgraph around a specific entity."""
     from wikirag.graph.sqlite_graph import SQLiteEntityGraph
     cfg = load_project_config(project)
     graph_db = Path(cfg.storage.data_dir) / "graph.db"
     graph = SQLiteEntityGraph(str(graph_db))
-    subgraph = graph.get_subgraph(entity_id=entity_name, max_depth=depth)
+    subgraph = graph.get_subgraph(entity_id=entity_name, max_depth=max(1, min(depth, 3)), relation_type=relation_type)
     return {
         "nodes": [n.model_dump() for n in subgraph.nodes],
-        "edges": [e.model_dump() for e in subgraph.edges],
+        "edges": _graph_edges_with_sources(subgraph.edges, cfg),
     }
 
 
@@ -767,18 +1023,45 @@ def get_admin_logs(limit: int = 80):
 def backup_admin_data(project: str = "tensura"):
     """Create a recoverable local zip of settings and SQLite metadata, excluding model/vector files."""
     cfg = load_project_config(project)
-    backup_dir = Path(cfg.storage.data_dir) / "backups"
+    root = Path(cfg.storage.data_dir).resolve()
+    backup_dir = root / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     target = backup_dir / f"wikirag-{project}-{stamp}.zip"
-    candidates = [Path(cfg.storage.state_file), Path(cfg.storage.alias_map_path), Path(cfg.storage.data_dir) / "graph.db", Path(_CHAT_HISTORY.db_path)]
-    settings_path = Path(cfg.storage.data_dir) / "settings.json"
-    if settings_path.exists(): candidates.append(settings_path)
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in candidates:
-            if path.exists() and path.is_file(): archive.write(path, arcname=path.name)
+    candidates = [
+        Path(cfg.storage.state_file),
+        Path(cfg.storage.alias_map_path),
+        root / "graph.db",
+        Path(_CHAT_HISTORY.db_path),
+        root / "settings.json",
+    ]
+    files = []
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved.is_file() and resolved.parent == root:
+            files.append(resolved)
+    files = list(dict.fromkeys(files))
+
+    # Write beside the final file and atomically rename it so an interrupted
+    # backup can never be mistaken for a valid restore point.
+    temp_target = backup_dir / f".{target.name}.tmp"
+    try:
+        with zipfile.ZipFile(temp_target, "w", zipfile.ZIP_DEFLATED) as archive:
+            manifest = {
+                "format": 1,
+                "project": project,
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "files": [path.name for path in files],
+            }
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            for path in files:
+                archive.write(path, arcname=path.name)
+        os.replace(temp_target, target)
+    finally:
+        if temp_target.exists():
+            temp_target.unlink()
     _sync_log(f"สร้าง Backup: {target.name}")
-    return {"path": str(target), "filename": target.name}
+    return {"path": str(target), "filename": target.name, "files": [path.name for path in files]}
 
 
 @app.get("/api/admin/backups")
@@ -797,17 +1080,44 @@ def restore_admin_backup(filename: str, project: str = "tensura"):
     if candidate.parent != backup_dir.resolve() or not candidate.is_file() or candidate.suffix.lower() != ".zip":
         raise HTTPException(status_code=404, detail="Backup not found")
     root = Path(load_project_config(project).storage.data_dir).resolve()
-    with zipfile.ZipFile(candidate) as archive:
-        for member in archive.infolist():
-            safe_name = Path(member.filename).name
-            if not safe_name or member.is_dir():
-                continue
-            destination = (root / safe_name).resolve()
-            if destination.parent != root:
-                continue
-            destination.write_bytes(archive.read(member))
+    allowed = {"state.json", "aliases.json", "graph.db", "chat_history.db", "settings.json"}
+    temp_dir = Path(tempfile.mkdtemp(prefix="restore-", dir=str(backup_dir)))
+    restored = []
+    try:
+        with zipfile.ZipFile(candidate) as archive:
+            names = [Path(member.filename).name for member in archive.infolist() if not member.is_dir()]
+            if "manifest.json" in names:
+                try:
+                    manifest = json.loads(archive.read("manifest.json"))
+                    if manifest.get("project") not in (None, project):
+                        raise HTTPException(status_code=400, detail="Backup belongs to another project")
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(status_code=400, detail="Invalid backup manifest") from exc
+            payload_names = [name for name in names if name != "manifest.json"]
+            if not payload_names:
+                raise HTTPException(status_code=400, detail="Backup contains no restorable data")
+            if any(name not in allowed for name in payload_names):
+                raise HTTPException(status_code=400, detail="Backup contains an unsupported file")
+            if len(payload_names) != len(set(payload_names)):
+                raise HTTPException(status_code=400, detail="Backup contains duplicate files")
+            for name in payload_names:
+                staged = temp_dir / name
+                staged.write_bytes(archive.read(name))
+
+        # Replace only known metadata files after the complete archive has been
+        # validated and staged. Vector DB and model files remain untouched.
+        for name in payload_names:
+            destination = root / name
+            os.replace(temp_dir / name, destination)
+            restored.append(name)
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="Invalid backup archive") from exc
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
     _sync_log(f"กู้คืน Backup: {candidate.name}", "warning")
-    return {"message": "Backup restored", "filename": candidate.name}
+    return {"message": "Backup restored", "filename": candidate.name, "files": restored}
 
 
 @app.get("/api/admin/status", response_model=SyncStatus)
@@ -877,5 +1187,5 @@ def get_sync_status(project: str = "tensura"):
         model_loaded=bool(_PIPELINE_CACHE),
         embedding_model=getattr(getattr(load_project_config(project), "embedding", None), "model_name", None),
         embedding_device=getattr(getattr(load_project_config(project), "embedding", None), "device", None),
-        memory_mb=round(__import__("resource").getrusage(__import__("resource").RUSAGE_SELF).ru_maxrss / 1024, 1) if os.name != "nt" else None,
+        memory_mb=_process_memory_mb(),
     )

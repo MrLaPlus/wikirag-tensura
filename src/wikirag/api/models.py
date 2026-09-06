@@ -12,13 +12,13 @@ class ChatRequest(BaseModel):
     enable_retry: bool = True
     api_key: Optional[str] = None
     base_url: Optional[str] = None
-    max_output_tokens: int = 1024
+    max_output_tokens: int = Field(default=1024, ge=1, le=16384)
     system_prompt: Optional[str] = None
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=96)
     enable_reranking: bool = False
     enable_bm25: bool = False
     reranker_model: Optional[str] = None
-    temperature: float = 0.1
+    temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     verification_mode: str = "off"  # off | verify_only | suggest | auto
     verification_strictness: str = "balanced"  # fast | balanced | detailed
     verify_numbers: bool = True
@@ -34,6 +34,8 @@ class VerificationRequest(BaseModel):
     answer: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     project: str = "tensura"
+    conversation_id: Optional[str] = None
+    message_id: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     api_key: Optional[str] = None
@@ -64,7 +66,7 @@ class ConversationUpdateRequest(BaseModel):
 class SearchRequest(BaseModel):
     query: str
     project: str = "tensura"
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=96)
     enable_reranking: bool = False
     enable_bm25: bool = False
     reranker_model: Optional[str] = None
@@ -89,6 +91,14 @@ class EntityCard(BaseModel):
     canonical_url: str
     infobox: Optional[Dict[str, Any]] = None
     categories: List[str] = Field(default_factory=list)
+    entity_type: Optional[str] = None
+    species: Optional[str] = None
+    rank: Optional[str] = None
+    status: Optional[str] = None
+    affiliation: List[str] = Field(default_factory=list)
+    skills: List[str] = Field(default_factory=list)
+    equipment: List[str] = Field(default_factory=list)
+    evolution: Optional[str] = None
 
 
 class EntityDetailResponse(BaseModel):

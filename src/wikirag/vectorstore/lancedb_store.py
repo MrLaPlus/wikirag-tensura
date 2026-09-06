@@ -183,6 +183,47 @@ class LanceDBStore(BaseVectorStore):
             logger.debug(f"FTS search fallback (no FTS index yet or query syntax): {e}")
             return []
 
+    def search_structured(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """Search infobox/category/alias fields directly without re-embedding rows."""
+        if len(self._table) == 0 or not query_text.strip():
+            return []
+
+    def metadata_rows(self) -> List[Dict[str, Any]]:
+        """Returns metadata needed to build the separate structured index."""
+        if len(self._table) == 0:
+            return []
+        cols = ["chunk_id", "entity", "canonical_url", "section_path", "chunk_text", "infobox_json", "categories_json", "aliases_json"]
+        table = self._table.search().select(cols).limit(1_000_000).to_arrow()
+        return [{col: table[col][i].as_py() for col in cols} for i in range(len(table))]
+
+    def quality_rows(self) -> List[Dict[str, Any]]:
+        """Return lightweight fields used by the data-quality audit."""
+        if len(self._table) == 0:
+            return []
+        cols = ["chunk_id", "content_hash", "entity", "chunk_text", "fetched_at"]
+        table = self._table.search().select(cols).limit(1_000_000).to_arrow()
+        return [{col: table[col][i].as_py() for col in cols} for i in range(len(table))]
+        terms = [t.lower() for t in query_text.split() if len(t) >= 2]
+        try:
+            cols = ["chunk_id", "entity", "canonical_url", "section_path", "chunk_type", "chunk_text", "infobox_json", "categories_json", "aliases_json"]
+            tbl = self._table.search().select(cols).limit(1_000_000).to_arrow()
+            results, seen = [], set()
+            for i in range(len(tbl)):
+                haystack = " ".join(str(tbl[col][i].as_py() or "") for col in cols[1:]).lower()
+                score = sum(term in haystack for term in terms)
+                key = tbl["chunk_id"][i].as_py()
+                if score and key not in seen:
+                    seen.add(key)
+                    row = {col: tbl[col][i].as_py() for col in cols}
+                    row["categories"] = json.loads(row.get("categories_json") or "[]")
+                    row["aliases"] = json.loads(row.get("aliases_json") or "[]")
+                    row["score"] = float(score)
+                    results.append(row)
+            return sorted(results, key=lambda r: r["score"], reverse=True)[:top_k]
+        except Exception as e:
+            logger.debug(f"Structured search unavailable: {e}")
+            return []
+
     def get_entities(self, limit: int = 50, offset: int = 0, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """Retrieves paginated unique entity cards with their infobox and category metadata."""
         if len(self._table) == 0:

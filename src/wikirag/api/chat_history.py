@@ -45,6 +45,9 @@ class ChatHistoryStore:
                 );
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+            if "verification_json" not in columns:
+                conn.execute("ALTER TABLE messages ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}' ")
 
     def list_conversations(self, project: str = "tensura", limit: int = 100) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -76,15 +79,24 @@ class ChatHistoryStore:
                 item = dict(row)
                 item["citations"] = json.loads(item.pop("citations_json") or "[]")
                 item["retrieval"] = json.loads(item.pop("retrieval_json") or "[]")
+                item["verification"] = json.loads(item.pop("verification_json") or "{}")
                 result.append(item)
             return result
 
-    def add_message(self, conversation_id: str, role: str, content: str, citations: Optional[List[Dict[str, Any]]] = None, retrieval: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def add_message(self, conversation_id: str, role: str, content: str, citations: Optional[List[Dict[str, Any]]] = None, retrieval: Optional[List[Dict[str, Any]]] = None, verification: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         message_id = str(uuid.uuid4())
         with self._connect() as conn:
-            conn.execute("INSERT INTO messages(id, conversation_id, role, content, citations_json, retrieval_json) VALUES (?, ?, ?, ?, ?, ?)", (message_id, conversation_id, role, content, json.dumps(citations or [], ensure_ascii=False), json.dumps(retrieval or [], ensure_ascii=False)))
+            conn.execute("INSERT INTO messages(id, conversation_id, role, content, citations_json, retrieval_json, verification_json) VALUES (?, ?, ?, ?, ?, ?, ?)", (message_id, conversation_id, role, content, json.dumps(citations or [], ensure_ascii=False), json.dumps(retrieval or [], ensure_ascii=False), json.dumps(verification or {}, ensure_ascii=False)))
             conn.execute("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (conversation_id,))
-        return {"id": message_id, "conversation_id": conversation_id, "role": role, "content": content, "citations": citations or [], "retrieval": retrieval or []}
+        return {"id": message_id, "conversation_id": conversation_id, "role": role, "content": content, "citations": citations or [], "retrieval": retrieval or [], "verification": verification or {}}
+
+    def update_message_verification(self, message_id: str, verification: Dict[str, Any]) -> bool:
+        """Persist second-pass verification without changing the original answer."""
+        with self._connect() as conn:
+            return conn.execute(
+                "UPDATE messages SET verification_json = ? WHERE id = ?",
+                (json.dumps(verification, ensure_ascii=False), message_id),
+            ).rowcount > 0
 
     def update_conversation(self, conversation_id: str, title: Optional[str] = None, provider: Optional[str] = None, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
         updates, values = [], []

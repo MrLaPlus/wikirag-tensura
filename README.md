@@ -151,6 +151,16 @@ Open [http://localhost:8000](http://localhost:8000).
 
 The web application includes streaming chat with stop/cancel, edit/copy/regenerate actions, persistent local chat history, non-secret settings, provider selection, retrieved-source transparency, entity browsing, an auto-refreshing knowledge graph, and an ingestion/embedding status dashboard.
 
+For deployments outside the local machine, enable the optional API protection in `.env`:
+
+```env
+WIKIRAG_PROTECT_API=1
+WIKIRAG_API_TOKEN=เปลี่ยนเป็นโทเคนที่เดายาก
+WIKIRAG_CORS_ORIGINS=https://your-frontend.example
+```
+
+Clients must send the token in the `X-WikiRAG-API-Token` header. This is a deployment safeguard, not a full user-login system; keep the server behind HTTPS and do not commit `.env`.
+
 Chat history is stored locally at `data/tensura/chat_history.db` and should not be committed to a public repository.
 
 ## Evaluation and tests

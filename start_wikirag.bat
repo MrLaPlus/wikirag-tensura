@@ -9,6 +9,18 @@ echo.
 echo Starting WikiRAG Server at http://localhost:8000 ...
 echo.
 
+REM Reuse an already-running server instead of binding port 8000 twice.
+netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul
+if %ERRORLEVEL% EQU 0 (
+    echo WikiRAG is already running at http://localhost:8000
+    echo The existing server owns port 8000, so no second server was started.
+    start "" http://localhost:8000
+    echo.
+    echo This window will stay open so you can read the status above.
+    pause
+    exit /b 0
+)
+
 REM Open browser after 2 seconds
 start "" cmd /c "timeout /t 2 /nobreak >nul & start http://localhost:8000"
 
